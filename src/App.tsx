@@ -57,6 +57,14 @@ export function App() {
     refresh();
   }, []);
 
+  useEffect(() => {
+    if (!profiles.some((profile) => profile.status === "running")) return;
+    const interval = window.setInterval(() => {
+      void refresh();
+    }, 1500);
+    return () => window.clearInterval(interval);
+  }, [profiles]);
+
   const selected = useMemo(
     () => profiles.find((profile) => profile.id === selectedId) ?? profiles[0],
     [profiles, selectedId],

@@ -1,15 +1,24 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use chrono::Utc;
 use directories::ProjectDirs;
 use rusqlite::{params, types::Type, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::{
     collections::HashMap,
     fs,
-    path::PathBuf,
+    io::{BufRead, BufReader, Read},
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::Mutex,
+    thread,
 };
 use tauri::{Manager, State};
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Default)]
 struct RunnerState {
@@ -220,7 +229,11 @@ fn save_profile(profile: Profile, state: State<AppState>) -> Result<Profile, Str
 }
 
 #[tauri::command]
-fn delete_profile(profile_id: String, remove_data: bool, state: State<AppState>) -> Result<(), String> {
+fn delete_profile(
+    profile_id: String,
+    remove_data: bool,
+    state: State<AppState>,
+) -> Result<(), String> {
     stop_profile_inner(profile_id.clone(), state.inner())?;
     state
         .conn()?
@@ -271,8 +284,13 @@ fn save_proxy(proxy: ProxyConfig, state: State<AppState>) -> Result<ProxyConfig,
 }
 
 #[tauri::command]
-fn launch_profile(profile_id: String, state: State<AppState>, app: tauri::AppHandle) -> Result<LaunchEvent, String> {
-    let mut profile = get_profile(&state, &profile_id)?.ok_or_else(|| "Profile not found".to_string())?;
+fn launch_profile(
+    profile_id: String,
+    state: State<AppState>,
+    app: tauri::AppHandle,
+) -> Result<LaunchEvent, String> {
+    let mut profile =
+        get_profile(&state, &profile_id)?.ok_or_else(|| "Profile not found".to_string())?;
     let profile_dir = state.profile_dir(&profile_id);
     fs::create_dir_all(&profile_dir).map_err(|error| error.to_string())?;
 
@@ -285,8 +303,11 @@ fn launch_profile(profile_id: String, state: State<AppState>, app: tauri::AppHan
             None => None,
         }
     });
-    fs::write(&payload_path, serde_json::to_vec_pretty(&payload).map_err(|error| error.to_string())?)
-        .map_err(|error| error.to_string())?;
+    fs::write(
+        &payload_path,
+        serde_json::to_vec_pretty(&payload).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
 
     let resource_dir = app.path().resource_dir().ok();
     let runner_script = find_existing_path(
@@ -294,7 +315,9 @@ fn launch_profile(profile_id: String, state: State<AppState>, app: tauri::AppHan
             resource_dir
                 .as_ref()
                 .map(|path| path.join("runner").join("dist").join("index.js")),
-            resource_dir.as_ref().map(|path| path.join("dist").join("index.js")),
+            resource_dir
+                .as_ref()
+                .map(|path| path.join("dist").join("index.js")),
             Some(PathBuf::from("runner").join("dist").join("index.js")),
         ]
         .into_iter()
@@ -305,7 +328,9 @@ fn launch_profile(profile_id: String, state: State<AppState>, app: tauri::AppHan
             resource_dir
                 .as_ref()
                 .map(|path| path.join("runner").join("bin").join("node.exe")),
-            resource_dir.as_ref().map(|path| path.join("bin").join("node.exe")),
+            resource_dir
+                .as_ref()
+                .map(|path| path.join("bin").join("node.exe")),
         ]
         .into_iter()
         .flatten(),
@@ -316,18 +341,33 @@ fn launch_profile(profile_id: String, state: State<AppState>, app: tauri::AppHan
         let mut command = bundled_node
             .map(Command::new)
             .unwrap_or_else(|| Command::new("node"));
+        hide_command_window(&mut command);
         let child = command
             .arg(&runner_script)
             .arg("launch")
             .arg(&payload_path)
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| format!("Failed to start Node runner: {error}"))?;
-        state.runner.children.lock().unwrap().insert(profile_id.clone(), child);
+        let mut child = child;
+        if let Some(stdout) = child.stdout.take() {
+            spawn_runner_log_reader(stdout, state.db_path.clone(), profile_id.clone(), false);
+        }
+        if let Some(stderr) = child.stderr.take() {
+            spawn_runner_log_reader(stderr, state.db_path.clone(), profile_id.clone(), true);
+        }
+        state
+            .runner
+            .children
+            .lock()
+            .unwrap()
+            .insert(profile_id.clone(), child);
     } else {
-        message = "Runner build not found. Run npm run runner:build before launching a real browser.".to_string();
+        message =
+            "Runner build not found. Run npm run runner:build before launching a real browser."
+                .to_string();
     }
 
     let at = Utc::now().to_rfc3339();
@@ -347,6 +387,61 @@ fn launch_profile(profile_id: String, state: State<AppState>, app: tauri::AppHan
 
 fn find_existing_path(paths: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
     paths.into_iter().find(|path| path.exists())
+}
+
+fn hide_command_window(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = command;
+    }
+}
+
+fn spawn_runner_log_reader<R>(
+    reader: R,
+    db_path: PathBuf,
+    profile_id: String,
+    is_error_stream: bool,
+) where
+    R: Read + Send + 'static,
+{
+    thread::spawn(move || {
+        for line in BufReader::new(reader).lines().map_while(Result::ok) {
+            let Some(message) = runner_message_from_line(&line, is_error_stream) else {
+                continue;
+            };
+            let event = LaunchEvent {
+                profile_id: profile_id.clone(),
+                status: ProfileStatus::Running,
+                message,
+                cdp_url: None,
+                at: Utc::now().to_rfc3339(),
+            };
+            let _ = record_event_to_db(&db_path, &event);
+        }
+    });
+}
+
+fn runner_message_from_line(line: &str, is_error_stream: bool) -> Option<String> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
+        if let Some(message) = value.get("message").and_then(|item| item.as_str()) {
+            return Some(message.to_string());
+        }
+    }
+    let lower = line.to_lowercase();
+    let prefix = if is_error_stream && (lower.contains("error") || lower.contains("failed")) {
+        "Runner error"
+    } else {
+        "Runner"
+    };
+    Some(format!("{prefix}: {line}"))
 }
 
 #[tauri::command]
@@ -420,11 +515,16 @@ fn get_profile(state: &AppState, profile_id: &str) -> Result<Option<Profile>, St
 fn get_proxy(state: &AppState, proxy_id: &str) -> Result<Option<ProxyConfig>, String> {
     state
         .conn()?
-        .query_row("select json from proxies where id=?1", params![proxy_id], |row| {
-            let json: String = row.get(0)?;
-            serde_json::from_str::<ProxyConfig>(&json)
-                .map_err(|error| rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(error)))
-        })
+        .query_row(
+            "select json from proxies where id=?1",
+            params![proxy_id],
+            |row| {
+                let json: String = row.get(0)?;
+                serde_json::from_str::<ProxyConfig>(&json).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(error))
+                })
+            },
+        )
         .optional()
         .map_err(|error| error.to_string())
 }
@@ -447,8 +547,12 @@ fn save_profile_inner(state: &AppState, profile: &Profile) -> Result<(), String>
 
 fn record_event(state: &AppState, event: &LaunchEvent) -> Result<(), String> {
     state.events.lock().unwrap().insert(0, event.clone());
-    state
-        .conn()?
+    record_event_to_db(&state.db_path, event)
+}
+
+fn record_event_to_db(db_path: &Path, event: &LaunchEvent) -> Result<(), String> {
+    Connection::open(db_path)
+        .map_err(|error| error.to_string())?
         .execute(
             "insert into launch_events (profile_id, json, created_at) values (?1, ?2, ?3)",
             params![
@@ -477,8 +581,9 @@ fn row_to_profile(row: &rusqlite::Row<'_>) -> rusqlite::Result<Profile> {
         created_at: row.get(8)?,
         updated_at: row.get(9)?,
         last_launched_at: row.get(10)?,
-        settings: serde_json::from_str(&settings_json)
-            .map_err(|error| rusqlite::Error::FromSqlConversionFailure(11, Type::Text, Box::new(error)))?,
+        settings: serde_json::from_str(&settings_json).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(11, Type::Text, Box::new(error))
+        })?,
     })
 }
 
