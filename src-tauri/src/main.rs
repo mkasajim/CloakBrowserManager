@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use chrono::Utc;
 use directories::ProjectDirs;
 use rusqlite::{params, types::Type, Connection, OptionalExtension};
@@ -10,6 +12,12 @@ use std::{
     sync::Mutex,
 };
 use tauri::{Manager, State};
+
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Default)]
 struct RunnerState {
@@ -288,11 +296,7 @@ fn launch_profile(profile_id: String, state: State<AppState>, app: tauri::AppHan
     fs::write(&payload_path, serde_json::to_vec_pretty(&payload).map_err(|error| error.to_string())?)
         .map_err(|error| error.to_string())?;
 
-    let packaged_runner_script = app
-        .path()
-        .resource_dir()
-        .ok()
-        .map(|path| path.join("runner").join("dist").join("index.js"));
+    let packaged_runner_script = app.path().resolve("runner/dist/index.js", tauri::path::BaseDirectory::Resource).ok();
     let dev_runner_script = PathBuf::from("runner").join("dist").join("index.js");
     let runner_script = packaged_runner_script
         .filter(|path| path.exists())
@@ -300,13 +304,19 @@ fn launch_profile(profile_id: String, state: State<AppState>, app: tauri::AppHan
 
     let mut message = "Runner started.".to_string();
     if runner_script.exists() {
-        let child = Command::new("node")
+        let mut command = Command::new("node");
+        command
             .arg(runner_script)
             .arg("launch")
             .arg(&payload_path)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::null());
+        #[cfg(target_os = "windows")]
+        {
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+        let child = command
             .spawn()
             .map_err(|error| format!("Failed to start Node runner: {error}"))?;
         state.runner.children.lock().unwrap().insert(profile_id.clone(), child);
