@@ -36,6 +36,42 @@ const splitList = (value: string) =>
 
 const joinList = (value: string[]) => value.join("\n");
 
+const fallbackTimezones = [
+  "UTC",
+  "America/New_York",
+  "America/Chicago",
+  "America/Denver",
+  "America/Los_Angeles",
+  "Europe/London",
+  "Europe/Berlin",
+  "Europe/Paris",
+  "Europe/Moscow",
+  "Asia/Dubai",
+  "Asia/Kolkata",
+  "Asia/Dhaka",
+  "Asia/Bangkok",
+  "Asia/Singapore",
+  "Asia/Tokyo",
+  "Australia/Sydney",
+];
+
+const timezoneOptions =
+  typeof Intl.supportedValuesOf === "function"
+    ? Intl.supportedValuesOf("timeZone")
+    : fallbackTimezones;
+
+function proxyLabel(proxy?: ProxyConfig) {
+  if (!proxy) return "Direct";
+  if (proxy.scheme === "system") return "System proxy";
+  return proxy.name;
+}
+
+function proxyDetail(proxy?: ProxyConfig) {
+  if (!proxy) return "Direct connection";
+  if (proxy.scheme === "system") return "Use Windows system proxy settings";
+  return `${proxy.scheme}://${proxy.host}:${proxy.port}`;
+}
+
 export function App() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [proxies, setProxies] = useState<ProxyConfig[]>([]);
@@ -135,9 +171,7 @@ export function App() {
           {proxies.map((proxy) => (
             <button key={proxy.id} className="proxy-item" onClick={() => setProxyDraft(proxy)}>
               <span>{proxy.name}</span>
-              <small>
-                {proxy.scheme}://{proxy.host || "host"}:{proxy.port}
-              </small>
+              <small>{proxyDetail(proxy)}</small>
             </button>
           ))}
         </section>
@@ -181,7 +215,7 @@ export function App() {
                     <td>
                       <span className={`status ${profile.status}`}>{profile.status}</span>
                     </td>
-                    <td>{proxies.find((proxy) => proxy.id === profile.proxyId)?.name ?? "Direct"}</td>
+                    <td>{proxyLabel(proxies.find((proxy) => proxy.id === profile.proxyId))}</td>
                     <td>{profile.settings.platform}</td>
                     <td>
                       {profile.settings.locale}
@@ -302,7 +336,7 @@ function ProfileInspector({
       </div>
       <dl>
         <dt>Proxy</dt>
-        <dd>{proxy ? `${proxy.scheme}://${proxy.host}:${proxy.port}` : "Direct connection"}</dd>
+        <dd>{proxyDetail(proxy)}</dd>
         <dt>Fingerprint seed</dt>
         <dd>{profile.settings.fingerprintSeed || "Auto"}</dd>
         <dt>Window</dt>
@@ -346,6 +380,7 @@ function ProfileEditor({
 }) {
   const patch = (partial: Partial<Profile>) => onChange({ ...profile, ...partial });
   const settings = (partial: Partial<Profile["settings"]>) => onChange({ ...profile, settings: { ...profile.settings, ...partial } });
+  const detectFromIp = profile.settings.geoipEnabled;
   return (
     <div className="modal-backdrop">
       <form className="modal wide" onSubmit={(event) => event.preventDefault()}>
@@ -370,7 +405,7 @@ function ProfileEditor({
               <option value="">Direct</option>
               {proxies.map((proxy) => (
                 <option key={proxy.id} value={proxy.id}>
-                  {proxy.name}
+                  {proxyLabel(proxy)}
                 </option>
               ))}
             </select>
@@ -387,10 +422,24 @@ function ProfileEditor({
             <input value={profile.settings.fingerprintSeed} onChange={(event) => settings({ fingerprintSeed: event.target.value })} />
           </Field>
           <Field label="Locale">
-            <input value={profile.settings.locale} onChange={(event) => settings({ locale: event.target.value })} />
+            <input
+              value={profile.settings.locale}
+              disabled={detectFromIp}
+              onChange={(event) => settings({ locale: event.target.value })}
+            />
           </Field>
           <Field label="Timezone">
-            <input value={profile.settings.timezone} onChange={(event) => settings({ timezone: event.target.value })} />
+            <select
+              value={profile.settings.timezone}
+              disabled={detectFromIp}
+              onChange={(event) => settings({ timezone: event.target.value })}
+            >
+              {Array.from(new Set([profile.settings.timezone, ...timezoneOptions])).map((timezone) => (
+                <option key={timezone} value={timezone}>
+                  {timezone}
+                </option>
+              ))}
+            </select>
           </Field>
           <Field label="Viewport width">
             <input type="number" value={profile.settings.viewportWidth} onChange={(event) => settings({ viewportWidth: Number(event.target.value) })} />
@@ -432,6 +481,12 @@ function ProfileEditor({
         <Field label="Notes">
           <textarea value={profile.notes} onChange={(event) => patch({ notes: event.target.value })} />
         </Field>
+        {detectFromIp ? (
+          <p className="muted">
+            Timezone and locale will be resolved from the selected network path. Direct uses a no-proxy outbound lookup, saved
+            proxies use their proxy IP, and System proxy uses Windows proxy settings.
+          </p>
+        ) : null}
         <footer>
           <button onClick={onCancel}>Cancel</button>
           <button className="primary" onClick={() => onSave(profile)}>
@@ -472,13 +527,24 @@ function ProxyEditor({
             <option value="http">HTTP</option>
             <option value="https">HTTPS</option>
             <option value="socks5">SOCKS5</option>
+            <option value="system">System proxy</option>
           </select>
         </Field>
         <Field label="Host">
-          <input value={proxy.host} onChange={(event) => patch({ host: event.target.value })} />
+          <input
+            value={proxy.host}
+            disabled={proxy.scheme === "system"}
+            placeholder={proxy.scheme === "system" ? "Uses Windows proxy settings" : ""}
+            onChange={(event) => patch({ host: event.target.value })}
+          />
         </Field>
         <Field label="Port">
-          <input type="number" value={proxy.port} onChange={(event) => patch({ port: Number(event.target.value) })} />
+          <input
+            type="number"
+            value={proxy.port}
+            disabled={proxy.scheme === "system"}
+            onChange={(event) => patch({ port: Number(event.target.value) })}
+          />
         </Field>
         <Field label="Username">
           <input value={proxy.username ?? ""} onChange={(event) => patch({ username: event.target.value })} />

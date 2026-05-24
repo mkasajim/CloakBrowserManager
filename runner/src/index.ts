@@ -1,8 +1,10 @@
 import { accessSync, constants, existsSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import https from "node:https";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import net from "node:net";
 
 interface LaunchPayload {
   profile: Profile;
@@ -45,6 +47,61 @@ interface ProxyConfig {
   password?: string;
   bypass?: string;
 }
+
+const IP_ECHO_URLS = ["https://api.ipify.org", "https://checkip.amazonaws.com", "https://ifconfig.me/ip"];
+
+const COUNTRY_LOCALE_MAP: Record<string, string> = {
+  US: "en-US",
+  GB: "en-GB",
+  AU: "en-AU",
+  CA: "en-CA",
+  NZ: "en-NZ",
+  IE: "en-IE",
+  ZA: "en-ZA",
+  SG: "en-SG",
+  DE: "de-DE",
+  AT: "de-AT",
+  CH: "de-CH",
+  FR: "fr-FR",
+  BE: "fr-BE",
+  ES: "es-ES",
+  MX: "es-MX",
+  AR: "es-AR",
+  CO: "es-CO",
+  CL: "es-CL",
+  BR: "pt-BR",
+  PT: "pt-PT",
+  IT: "it-IT",
+  NL: "nl-NL",
+  JP: "ja-JP",
+  KR: "ko-KR",
+  CN: "zh-CN",
+  TW: "zh-TW",
+  HK: "zh-HK",
+  RU: "ru-RU",
+  UA: "uk-UA",
+  PL: "pl-PL",
+  CZ: "cs-CZ",
+  RO: "ro-RO",
+  IL: "he-IL",
+  TR: "tr-TR",
+  SA: "ar-SA",
+  AE: "ar-AE",
+  EG: "ar-EG",
+  IN: "hi-IN",
+  ID: "id-ID",
+  PH: "en-PH",
+  TH: "th-TH",
+  VN: "vi-VN",
+  MY: "ms-MY",
+  SE: "sv-SE",
+  NO: "nb-NO",
+  DK: "da-DK",
+  FI: "fi-FI",
+  GR: "el-GR",
+  HU: "hu-HU",
+  BG: "bg-BG",
+};
 
 function parseVersion(version: string) {
   return version.split(".").map((part) => Number.parseInt(part, 10) || 0);
@@ -102,7 +159,8 @@ function configureLocalBinaryOverride() {
 }
 
 function proxyUrl(proxy?: ProxyConfig | null) {
-  if (!proxy || !proxy.host) return undefined;
+  if (!proxy || proxy.scheme === "system") return undefined;
+  if (!proxy.host) return undefined;
   const auth =
     proxy.username && proxy.password
       ? `${encodeURIComponent(proxy.username)}:${encodeURIComponent(proxy.password)}@`
@@ -110,7 +168,7 @@ function proxyUrl(proxy?: ProxyConfig | null) {
   return `${proxy.scheme}://${auth}${proxy.host}:${proxy.port}`;
 }
 
-function buildArgs(settings: ProfileSettings) {
+function buildArgs(settings: ProfileSettings, proxy?: ProxyConfig | null) {
   const args = [...settings.extraArgs];
   if (settings.fingerprintSeed) args.push(`--fingerprint=${settings.fingerprintSeed}`);
   if (settings.platform !== "auto") args.push(`--fingerprint-platform=${settings.platform}`);
@@ -122,7 +180,52 @@ function buildArgs(settings: ProfileSettings) {
     args.push(`--fingerprint-webrtc-ip=${settings.webrtcIp}`);
   }
   if (settings.webrtcMode === "disabled") args.push("--disable-webrtc");
+  if (!proxy) args.push("--no-proxy-server");
   return args;
+}
+
+function requestText(url: string) {
+  return new Promise<string | null>((resolve) => {
+    const request = https.request(url, { timeout: 5000 }, (response) => {
+      let data = "";
+      response.on("data", (chunk) => {
+        data += chunk.toString();
+      });
+      response.on("end", () => {
+        resolve(response.statusCode && response.statusCode >= 200 && response.statusCode < 300 ? data : null);
+      });
+    });
+    request.on("error", () => resolve(null));
+    request.on("timeout", () => {
+      request.destroy();
+      resolve(null);
+    });
+    request.end();
+  });
+}
+
+async function resolveDirectExitIp() {
+  for (const url of IP_ECHO_URLS) {
+    const body = (await requestText(url))?.trim();
+    if (body && net.isIP(body)) return body;
+  }
+  return undefined;
+}
+
+async function resolveDirectGeo() {
+  const body = await requestText("https://ipapi.co/json/");
+  if (!body) return {};
+
+  try {
+    const data = JSON.parse(body) as { timezone?: string; country_code?: string };
+    const countryCode = data.country_code?.toUpperCase();
+    return {
+      timezone: data.timezone || undefined,
+      locale: countryCode ? COUNTRY_LOCALE_MAP[countryCode] : undefined,
+    };
+  } catch {
+    return {};
+  }
 }
 
 async function launch(payloadPath: string) {
@@ -130,13 +233,29 @@ async function launch(payloadPath: string) {
   const { launchPersistentContext } = await import("cloakbrowser");
   const payload = JSON.parse(await readFile(payloadPath, "utf8")) as LaunchPayload;
   const settings = payload.profile.settings;
+  const useGeoIpDetection = settings.geoipEnabled;
+  const explicitProxy = payload.proxy && payload.proxy.scheme !== "system" ? payload.proxy : undefined;
+  const directConnection = !payload.proxy;
+  let resolvedTimezone = useGeoIpDetection ? undefined : settings.timezone || undefined;
+  let resolvedLocale = useGeoIpDetection ? undefined : settings.locale || undefined;
+  let launchArgs = buildArgs(settings, payload.proxy);
+
+  if (useGeoIpDetection && directConnection) {
+    const [geo, exitIp] = await Promise.all([resolveDirectGeo(), resolveDirectExitIp()]);
+    resolvedTimezone = geo.timezone;
+    resolvedLocale = geo.locale;
+    if (exitIp && settings.webrtcMode === "auto" && !launchArgs.some((arg) => arg.startsWith("--fingerprint-webrtc-ip="))) {
+      launchArgs = [...launchArgs, `--fingerprint-webrtc-ip=${exitIp}`];
+    }
+  }
+
   const context = await launchPersistentContext({
     userDataDir: payload.profileDataDir,
     headless: false,
-    proxy: proxyUrl(payload.proxy),
-    args: buildArgs(settings),
-    timezone: settings.timezone || undefined,
-    locale: settings.locale || undefined,
+    proxy: proxyUrl(explicitProxy),
+    args: launchArgs,
+    timezone: resolvedTimezone,
+    locale: resolvedLocale,
     userAgent: settings.userAgent || undefined,
     viewport: {
       width: settings.viewportWidth,
@@ -147,7 +266,7 @@ async function launch(payloadPath: string) {
     },
     humanize: settings.humanizeEnabled,
     humanPreset: settings.humanPreset === "default" ? undefined : settings.humanPreset,
-    geoip: settings.geoipEnabled,
+    geoip: useGeoIpDetection && !!explicitProxy,
     extensionPaths: settings.extensionPaths.length ? settings.extensionPaths : undefined,
   });
 

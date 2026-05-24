@@ -1,6 +1,6 @@
 export type ProfileStatus = "stopped" | "running" | "unknown";
 
-export type ProxyScheme = "http" | "https" | "socks5";
+export type ProxyScheme = "http" | "https" | "socks5" | "system";
 
 export type Platform = "auto" | "windows" | "macos" | "linux";
 

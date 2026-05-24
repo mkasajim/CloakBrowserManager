@@ -269,8 +269,11 @@ fn list_proxies(state: State<AppState>) -> Result<Vec<ProxyConfig>, String> {
 
 #[tauri::command]
 fn save_proxy(proxy: ProxyConfig, state: State<AppState>) -> Result<ProxyConfig, String> {
-    if proxy.name.trim().is_empty() || proxy.host.trim().is_empty() {
-        return Err("Proxy name and host are required".to_string());
+    if proxy.name.trim().is_empty() {
+        return Err("Proxy name is required".to_string());
+    }
+    if proxy.scheme != "system" && proxy.host.trim().is_empty() {
+        return Err("Proxy host is required".to_string());
     }
     let json = serde_json::to_string(&proxy).map_err(|error| error.to_string())?;
     state
