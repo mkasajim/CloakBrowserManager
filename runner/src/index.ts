@@ -169,6 +169,44 @@ function proxyUrl(proxy?: ProxyConfig | null) {
   return `${proxy.scheme}://${auth}${proxy.host}:${proxy.port}`;
 }
 
+function parseSystemProxyValue(value: string, bypass?: string) {
+  const entries = value
+    .split(";")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const candidates = entries.length > 1 ? entries : [value.trim()];
+
+  for (const candidate of candidates) {
+    const [rawScheme, rawTarget] = candidate.includes("=") ? candidate.split("=", 2) : ["http", candidate];
+    const scheme = rawScheme.trim().toLowerCase();
+    const target = rawTarget.trim();
+    if (!target) continue;
+
+    const normalizedScheme = scheme === "socks" ? "socks5" : scheme === "https" ? "https" : "http";
+    const withScheme = /^[a-z]+:\/\//i.test(target) ? target : `${normalizedScheme}://${target}`;
+
+    try {
+      const parsed = new URL(withScheme);
+      const port =
+        parsed.port ||
+        (parsed.protocol === "https:" ? "443" : parsed.protocol.startsWith("socks") ? "1080" : "80");
+
+      return {
+        scheme: parsed.protocol.replace(":", ""),
+        host: parsed.hostname,
+        port: Number.parseInt(port, 10),
+        username: parsed.username ? decodeURIComponent(parsed.username) : undefined,
+        password: parsed.password ? decodeURIComponent(parsed.password) : undefined,
+        bypass,
+      } satisfies ProxyConfig;
+    } catch {
+      continue;
+    }
+  }
+
+  return undefined;
+}
+
 function buildArgs(settings: ProfileSettings, proxy?: ProxyConfig | null) {
   const args = [...settings.extraArgs];
   if (settings.fingerprintSeed) args.push(`--fingerprint=${settings.fingerprintSeed}`);
@@ -222,6 +260,49 @@ function requestTextViaSystemProxy(url: string) {
           return;
         }
         resolve(stdout);
+      },
+    );
+  });
+}
+
+function resolveSystemProxyFromWindows() {
+  return new Promise<ProxyConfig | undefined>((resolve) => {
+    const command = [
+      "$ProgressPreference='SilentlyContinue'",
+      "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8",
+      "$key='HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings'",
+      "try {",
+      "  $props = Get-ItemProperty -Path $key",
+      "  if (-not $props.ProxyEnable -or [string]::IsNullOrWhiteSpace($props.ProxyServer)) { exit 0 }",
+      "  $result = [ordered]@{",
+      "    proxyServer = [string]$props.ProxyServer",
+      "    proxyOverride = if ($props.ProxyOverride) { [string]$props.ProxyOverride } else { '' }",
+      "    autoConfigUrl = if ($props.AutoConfigURL) { [string]$props.AutoConfigURL } else { '' }",
+      "  }",
+      "  $result | ConvertTo-Json -Compress",
+      "} catch { exit 1 }",
+    ].join(";");
+
+    execFile(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command],
+      { timeout: 7000, windowsHide: true, maxBuffer: 1024 * 1024 },
+      (error, stdout) => {
+        if (error || !stdout.trim()) {
+          resolve(undefined);
+          return;
+        }
+
+        try {
+          const data = JSON.parse(stdout) as { proxyServer?: string; proxyOverride?: string; autoConfigUrl?: string };
+          const proxy = data.proxyServer ? parseSystemProxyValue(data.proxyServer, data.proxyOverride || undefined) : undefined;
+          if (!proxy && data.autoConfigUrl) {
+            console.warn(`[runner] System proxy uses PAC script ${data.autoConfigUrl}, which cannot be converted to an explicit proxy.`);
+          }
+          resolve(proxy);
+        } catch {
+          resolve(undefined);
+        }
       },
     );
   });
@@ -281,12 +362,14 @@ async function launch(payloadPath: string) {
   const payload = JSON.parse(await readFile(payloadPath, "utf8")) as LaunchPayload;
   const settings = payload.profile.settings;
   const useGeoIpDetection = settings.geoipEnabled;
-  const explicitProxy = payload.proxy && payload.proxy.scheme !== "system" ? payload.proxy : undefined;
-  const systemProxy = payload.proxy?.scheme === "system";
-  const directConnection = !payload.proxy;
+  const selectedSystemProxy = payload.proxy?.scheme === "system";
+  const resolvedSystemProxy = selectedSystemProxy ? await resolveSystemProxyFromWindows() : undefined;
+  const explicitProxy =
+    selectedSystemProxy ? resolvedSystemProxy : payload.proxy && payload.proxy.scheme !== "system" ? payload.proxy : undefined;
+  const directConnection = !explicitProxy && !selectedSystemProxy && !payload.proxy;
   let resolvedTimezone = useGeoIpDetection ? undefined : settings.timezone || undefined;
   let resolvedLocale = useGeoIpDetection ? undefined : settings.locale || undefined;
-  let launchArgs = buildArgs(settings, payload.proxy);
+  let launchArgs = buildArgs(settings, explicitProxy);
 
   if (useGeoIpDetection && directConnection) {
     const [geo, exitIp] = await Promise.all([resolveDirectGeo(), resolveDirectExitIp()]);
@@ -297,17 +380,13 @@ async function launch(payloadPath: string) {
     }
   }
 
-  if (useGeoIpDetection && systemProxy) {
-    const [geo, exitIp] = await Promise.all([resolveSystemProxyGeo(), resolveSystemProxyExitIp()]);
-    resolvedTimezone = geo.timezone;
-    resolvedLocale = geo.locale;
-    if (exitIp && settings.webrtcMode === "auto" && !launchArgs.some((arg) => arg.startsWith("--fingerprint-webrtc-ip="))) {
-      launchArgs = [...launchArgs, `--fingerprint-webrtc-ip=${exitIp}`];
-    }
+  if (useGeoIpDetection && selectedSystemProxy && !explicitProxy) {
+    console.warn("[runner] System proxy selected but no explicit Windows proxy server could be resolved; falling back without geoip proxy resolution.");
   }
 
   console.log(
-    `[runner] Launch network path=${directConnection ? "direct" : systemProxy ? "system-proxy" : "saved-proxy"} ` +
+    `[runner] Launch network path=${directConnection ? "direct" : selectedSystemProxy ? "system-proxy" : "saved-proxy"} ` +
+      `resolvedProxy=${proxyUrl(explicitProxy) ?? "none"} ` +
       `resolvedTimezone=${resolvedTimezone ?? "unset"} resolvedLocale=${resolvedLocale ?? "unset"}`,
   );
 
@@ -316,8 +395,8 @@ async function launch(payloadPath: string) {
     headless: false,
     proxy: proxyUrl(explicitProxy),
     args: launchArgs,
-    timezone: resolvedTimezone,
-    locale: resolvedLocale,
+    timezone: useGeoIpDetection && !!explicitProxy ? undefined : resolvedTimezone,
+    locale: useGeoIpDetection && !!explicitProxy ? undefined : resolvedLocale,
     userAgent: settings.userAgent || undefined,
     viewport: {
       width: settings.viewportWidth,
