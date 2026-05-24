@@ -306,6 +306,11 @@ async function launch(payloadPath: string) {
     }
   }
 
+  console.log(
+    `[runner] Launch network path=${directConnection ? "direct" : systemProxy ? "system-proxy" : "saved-proxy"} ` +
+      `resolvedTimezone=${resolvedTimezone ?? "unset"} resolvedLocale=${resolvedLocale ?? "unset"}`,
+  );
+
   const context = await launchPersistentContext({
     userDataDir: payload.profileDataDir,
     headless: false,
@@ -328,7 +333,15 @@ async function launch(payloadPath: string) {
   });
 
   const page = context.pages()[0] ?? (await context.newPage());
-  if (settings.startupUrl) await page.goto(settings.startupUrl);
+  if (settings.startupUrl) {
+    try {
+      await page.goto(settings.startupUrl, { waitUntil: "domcontentloaded", timeout: 45000 });
+    } catch (error) {
+      console.warn(
+        `[runner] Startup navigation failed for ${settings.startupUrl}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
 
   process.stdout.write(
     JSON.stringify({
