@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/index.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "postinstall": "node ./bin/patch-cloakbrowser.mjs"
   },
   "dependencies": {
     "cloakbrowser": "^0.3.30",

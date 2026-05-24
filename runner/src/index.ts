@@ -1,6 +1,8 @@
+import { accessSync, constants, existsSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import process from "node:process";
-import { launchPersistentContext } from "cloakbrowser";
 
 interface LaunchPayload {
   profile: Profile;
@@ -44,6 +46,61 @@ interface ProxyConfig {
   bypass?: string;
 }
 
+function parseVersion(version: string) {
+  return version.split(".").map((part) => Number.parseInt(part, 10) || 0);
+}
+
+function compareVersions(a: string, b: string) {
+  const left = parseVersion(a);
+  const right = parseVersion(b);
+  const length = Math.max(left.length, right.length);
+
+  for (let index = 0; index < length; index += 1) {
+    const delta = (left[index] ?? 0) - (right[index] ?? 0);
+    if (delta !== 0) return delta;
+  }
+
+  return 0;
+}
+
+function canUseBinary(binaryPath: string) {
+  try {
+    accessSync(binaryPath, constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function findCachedCloakBrowserBinary() {
+  const cacheDir = process.env.CLOAKBROWSER_CACHE_DIR || path.join(os.homedir(), ".cloakbrowser");
+  if (!existsSync(cacheDir)) return undefined;
+
+  const candidates = readdirSync(cacheDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith("chromium-"))
+    .map((entry) => {
+      const version = entry.name.slice("chromium-".length);
+      const binaryPath = path.join(cacheDir, entry.name, "chrome.exe");
+      return { version, binaryPath };
+    })
+    .filter((entry) => canUseBinary(entry.binaryPath))
+    .sort((left, right) => compareVersions(right.version, left.version));
+
+  return candidates[0]?.binaryPath;
+}
+
+function configureLocalBinaryOverride() {
+  if (process.env.CLOAKBROWSER_BINARY_PATH && canUseBinary(process.env.CLOAKBROWSER_BINARY_PATH)) {
+    return;
+  }
+
+  const cachedBinary = findCachedCloakBrowserBinary();
+  if (!cachedBinary) return;
+
+  process.env.CLOAKBROWSER_BINARY_PATH = cachedBinary;
+  console.log(`[runner] Reusing cached CloakBrowser binary: ${cachedBinary}`);
+}
+
 function proxyUrl(proxy?: ProxyConfig | null) {
   if (!proxy || !proxy.host) return undefined;
   const auth =
@@ -69,6 +126,8 @@ function buildArgs(settings: ProfileSettings) {
 }
 
 async function launch(payloadPath: string) {
+  configureLocalBinaryOverride();
+  const { launchPersistentContext } = await import("cloakbrowser");
   const payload = JSON.parse(await readFile(payloadPath, "utf8")) as LaunchPayload;
   const settings = payload.profile.settings;
   const context = await launchPersistentContext({
