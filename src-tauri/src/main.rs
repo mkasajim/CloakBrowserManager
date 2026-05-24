@@ -309,9 +309,24 @@ fn launch_profile(
     )
     .map_err(|error| error.to_string())?;
 
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf));
     let resource_dir = app.path().resource_dir().ok();
+    let runner_root = find_existing_path(
+        [
+            exe_dir.as_ref().map(|path| path.join("runner")),
+            resource_dir.as_ref().map(|path| path.join("runner")),
+            Some(PathBuf::from("runner")),
+        ]
+        .into_iter()
+        .flatten(),
+    );
     let runner_script = find_existing_path(
         [
+            runner_root
+                .as_ref()
+                .map(|path| path.join("dist").join("index.js")),
             resource_dir
                 .as_ref()
                 .map(|path| path.join("runner").join("dist").join("index.js")),
@@ -325,6 +340,9 @@ fn launch_profile(
     );
     let bundled_node = find_existing_path(
         [
+            runner_root
+                .as_ref()
+                .map(|path| path.join("bin").join("node.exe")),
             resource_dir
                 .as_ref()
                 .map(|path| path.join("runner").join("bin").join("node.exe")),
@@ -342,8 +360,16 @@ fn launch_profile(
             .map(Command::new)
             .unwrap_or_else(|| Command::new("node"));
         hide_command_window(&mut command);
+        if let Some(runner_root) = runner_root.as_ref() {
+            command.current_dir(runner_root);
+        }
+        let script_arg = runner_root
+            .as_ref()
+            .filter(|root| runner_script.starts_with(root))
+            .map(|_| PathBuf::from("dist").join("index.js"))
+            .unwrap_or(runner_script.clone());
         let child = command
-            .arg(&runner_script)
+            .arg(&script_arg)
             .arg("launch")
             .arg(&payload_path)
             .stdin(Stdio::null())
@@ -365,9 +391,13 @@ fn launch_profile(
             .unwrap()
             .insert(profile_id.clone(), child);
     } else {
-        message =
-            "Runner build not found. Run npm run runner:build before launching a real browser."
-                .to_string();
+        let resolved = runner_root
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "<not found>".to_string());
+        message = format!(
+            "Runner build not found. Expected runner files under {resolved}. Run npm run runner:build before launching a real browser."
+        );
     }
 
     let at = Utc::now().to_rfc3339();
