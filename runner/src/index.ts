@@ -265,29 +265,44 @@ function requestTextViaSystemProxy(url: string) {
   });
 }
 
-function resolveSystemProxyFromWindows() {
-  return new Promise<ProxyConfig | undefined>((resolve) => {
-    const command = [
-      "$ProgressPreference='SilentlyContinue'",
-      "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8",
-      "$key='HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings'",
-      "try {",
-      "  $props = Get-ItemProperty -Path $key",
-      "  if (-not $props.ProxyEnable -or [string]::IsNullOrWhiteSpace($props.ProxyServer)) { exit 0 }",
-      "  $result = [ordered]@{",
-      "    proxyServer = [string]$props.ProxyServer",
-      "    proxyOverride = if ($props.ProxyOverride) { [string]$props.ProxyOverride } else { '' }",
-      "    autoConfigUrl = if ($props.AutoConfigURL) { [string]$props.AutoConfigURL } else { '' }",
-      "  }",
-      "  $result | ConvertTo-Json -Compress",
-      "} catch { exit 1 }",
-    ].join(";");
-
+function runPowerShell(script: string) {
+  return new Promise<{ stdout: string; stderr: string; error: Error | null }>((resolve) => {
+    const encoded = Buffer.from(script, "utf16le").toString("base64");
     execFile(
       "powershell.exe",
-      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command],
+      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],
       { timeout: 7000, windowsHide: true, maxBuffer: 1024 * 1024 },
-      (error, stdout) => {
+      (error, stdout, stderr) => {
+        resolve({
+          stdout,
+          stderr,
+          error: error instanceof Error ? error : null,
+        });
+      },
+    );
+  });
+}
+
+function resolveSystemProxyFromWindows() {
+  return new Promise<ProxyConfig | undefined>((resolve) => {
+    const script = `
+$ProgressPreference = 'SilentlyContinue'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$key = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings'
+try {
+  $props = Get-ItemProperty -Path $key
+  if (-not $props.ProxyEnable -or [string]::IsNullOrWhiteSpace($props.ProxyServer)) { exit 0 }
+  [pscustomobject]@{
+    proxyServer = [string]$props.ProxyServer
+    proxyOverride = if ($props.ProxyOverride) { [string]$props.ProxyOverride } else { '' }
+    autoConfigUrl = if ($props.AutoConfigURL) { [string]$props.AutoConfigURL } else { '' }
+  } | ConvertTo-Json -Compress
+} catch {
+  exit 1
+}
+`;
+
+    runPowerShell(script).then(({ error, stdout }) => {
         if (error || !stdout.trim()) {
           resolve(undefined);
           return;
@@ -303,8 +318,7 @@ function resolveSystemProxyFromWindows() {
         } catch {
           resolve(undefined);
         }
-      },
-    );
+      });
   });
 }
 
