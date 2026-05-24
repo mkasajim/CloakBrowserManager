@@ -241,14 +241,17 @@ fn list_proxies(state: State<AppState>) -> Result<Vec<ProxyConfig>, String> {
     let mut stmt = conn
         .prepare("select json from proxies order by json")
         .map_err(|error| error.to_string())?;
-    stmt.query_map([], |row| {
-        let json: String = row.get(0)?;
-        serde_json::from_str::<ProxyConfig>(&json)
-            .map_err(|error| rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(error)))
-    })
-    .map_err(|error| error.to_string())?
-    .collect::<Result<Vec<_>, _>>()
-    .map_err(|error| error.to_string())
+    let proxies = stmt
+        .query_map([], |row| {
+            let json: String = row.get(0)?;
+            serde_json::from_str::<ProxyConfig>(&json).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(error))
+            })
+        })
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    Ok(proxies)
 }
 
 #[tauri::command]
@@ -358,14 +361,17 @@ fn list_launch_events(state: State<AppState>) -> Result<Vec<LaunchEvent>, String
     let mut stmt = conn
         .prepare("select json from launch_events order by id desc limit 100")
         .map_err(|error| error.to_string())?;
-    stmt.query_map([], |row| {
-        let json: String = row.get(0)?;
-            serde_json::from_str::<LaunchEvent>(&json)
-                .map_err(|error| rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(error)))
-    })
-    .map_err(|error| error.to_string())?
-    .collect::<Result<Vec<_>, _>>()
-    .map_err(|error| error.to_string())
+    let events = stmt
+        .query_map([], |row| {
+            let json: String = row.get(0)?;
+            serde_json::from_str::<LaunchEvent>(&json).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(error))
+            })
+        })
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    Ok(events)
 }
 
 #[tauri::command]
