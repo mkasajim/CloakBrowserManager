@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import net from "node:net";
+import { execFile } from "node:child_process";
 
 interface LaunchPayload {
   profile: Profile;
@@ -204,9 +205,39 @@ function requestText(url: string) {
   });
 }
 
+function requestTextViaSystemProxy(url: string) {
+  return new Promise<string | null>((resolve) => {
+    const command =
+      `$ProgressPreference='SilentlyContinue';` +
+      `[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;` +
+      `try {(Invoke-WebRequest -UseBasicParsing -Uri '${url}' -TimeoutSec 5).Content} catch {exit 1}`;
+
+    execFile(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command],
+      { timeout: 7000, windowsHide: true, maxBuffer: 1024 * 1024 },
+      (error, stdout) => {
+        if (error) {
+          resolve(null);
+          return;
+        }
+        resolve(stdout);
+      },
+    );
+  });
+}
+
 async function resolveDirectExitIp() {
   for (const url of IP_ECHO_URLS) {
     const body = (await requestText(url))?.trim();
+    if (body && net.isIP(body)) return body;
+  }
+  return undefined;
+}
+
+async function resolveSystemProxyExitIp() {
+  for (const url of IP_ECHO_URLS) {
+    const body = (await requestTextViaSystemProxy(url))?.trim();
     if (body && net.isIP(body)) return body;
   }
   return undefined;
@@ -228,6 +259,22 @@ async function resolveDirectGeo() {
   }
 }
 
+async function resolveSystemProxyGeo() {
+  const body = await requestTextViaSystemProxy("https://ipapi.co/json/");
+  if (!body) return {};
+
+  try {
+    const data = JSON.parse(body) as { timezone?: string; country_code?: string };
+    const countryCode = data.country_code?.toUpperCase();
+    return {
+      timezone: data.timezone || undefined,
+      locale: countryCode ? COUNTRY_LOCALE_MAP[countryCode] : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
 async function launch(payloadPath: string) {
   configureLocalBinaryOverride();
   const { launchPersistentContext } = await import("cloakbrowser");
@@ -235,6 +282,7 @@ async function launch(payloadPath: string) {
   const settings = payload.profile.settings;
   const useGeoIpDetection = settings.geoipEnabled;
   const explicitProxy = payload.proxy && payload.proxy.scheme !== "system" ? payload.proxy : undefined;
+  const systemProxy = payload.proxy?.scheme === "system";
   const directConnection = !payload.proxy;
   let resolvedTimezone = useGeoIpDetection ? undefined : settings.timezone || undefined;
   let resolvedLocale = useGeoIpDetection ? undefined : settings.locale || undefined;
@@ -242,6 +290,15 @@ async function launch(payloadPath: string) {
 
   if (useGeoIpDetection && directConnection) {
     const [geo, exitIp] = await Promise.all([resolveDirectGeo(), resolveDirectExitIp()]);
+    resolvedTimezone = geo.timezone;
+    resolvedLocale = geo.locale;
+    if (exitIp && settings.webrtcMode === "auto" && !launchArgs.some((arg) => arg.startsWith("--fingerprint-webrtc-ip="))) {
+      launchArgs = [...launchArgs, `--fingerprint-webrtc-ip=${exitIp}`];
+    }
+  }
+
+  if (useGeoIpDetection && systemProxy) {
+    const [geo, exitIp] = await Promise.all([resolveSystemProxyGeo(), resolveSystemProxyExitIp()]);
     resolvedTimezone = geo.timezone;
     resolvedLocale = geo.locale;
     if (exitIp && settings.webrtcMode === "auto" && !launchArgs.some((arg) => arg.startsWith("--fingerprint-webrtc-ip="))) {
