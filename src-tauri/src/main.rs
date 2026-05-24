@@ -228,7 +228,11 @@ fn save_profile(profile: Profile, state: State<AppState>) -> Result<Profile, Str
 }
 
 #[tauri::command]
-fn delete_profile(profile_id: String, remove_data: bool, state: State<AppState>) -> Result<(), String> {
+fn delete_profile(
+    profile_id: String,
+    remove_data: bool,
+    state: State<AppState>,
+) -> Result<(), String> {
     stop_profile_inner(profile_id.clone(), state.inner())?;
     state
         .conn()?
@@ -279,8 +283,13 @@ fn save_proxy(proxy: ProxyConfig, state: State<AppState>) -> Result<ProxyConfig,
 }
 
 #[tauri::command]
-fn launch_profile(profile_id: String, state: State<AppState>, app: tauri::AppHandle) -> Result<LaunchEvent, String> {
-    let mut profile = get_profile(&state, &profile_id)?.ok_or_else(|| "Profile not found".to_string())?;
+fn launch_profile(
+    profile_id: String,
+    state: State<AppState>,
+    app: tauri::AppHandle,
+) -> Result<LaunchEvent, String> {
+    let mut profile =
+        get_profile(&state, &profile_id)?.ok_or_else(|| "Profile not found".to_string())?;
     let profile_dir = state.profile_dir(&profile_id);
     fs::create_dir_all(&profile_dir).map_err(|error| error.to_string())?;
 
@@ -293,14 +302,14 @@ fn launch_profile(profile_id: String, state: State<AppState>, app: tauri::AppHan
             None => None,
         }
     });
-    fs::write(&payload_path, serde_json::to_vec_pretty(&payload).map_err(|error| error.to_string())?)
-        .map_err(|error| error.to_string())?;
+    fs::write(
+        &payload_path,
+        serde_json::to_vec_pretty(&payload).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
 
-    let packaged_runner_script = app.path().resolve("runner/dist/index.js", tauri::path::BaseDirectory::Resource).ok();
     let dev_runner_script = PathBuf::from("runner").join("dist").join("index.js");
-    let runner_script = packaged_runner_script
-        .filter(|path| path.exists())
-        .unwrap_or(dev_runner_script);
+    let runner_script = resolve_runner_script(&app).unwrap_or(dev_runner_script);
 
     let mut message = "Runner started.".to_string();
     if runner_script.exists() {
@@ -319,9 +328,16 @@ fn launch_profile(profile_id: String, state: State<AppState>, app: tauri::AppHan
         let child = command
             .spawn()
             .map_err(|error| format!("Failed to start Node runner: {error}"))?;
-        state.runner.children.lock().unwrap().insert(profile_id.clone(), child);
+        state
+            .runner
+            .children
+            .lock()
+            .unwrap()
+            .insert(profile_id.clone(), child);
     } else {
-        message = "Runner build not found. Run npm run runner:build before launching a real browser.".to_string();
+        message =
+            "Runner build not found. Run npm run runner:build before launching a real browser."
+                .to_string();
     }
 
     let at = Utc::now().to_rfc3339();
@@ -337,6 +353,16 @@ fn launch_profile(profile_id: String, state: State<AppState>, app: tauri::AppHan
     };
     record_event(&state, &event)?;
     Ok(event)
+}
+
+fn resolve_runner_script(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let resource_dir = app.path().resource_dir().ok()?;
+    let candidates = [
+        resource_dir.join("runner").join("dist").join("index.js"),
+        resource_dir.join("dist").join("index.js"),
+        resource_dir.join("runner-dist").join("index.js"),
+    ];
+    candidates.into_iter().find(|path| path.exists())
 }
 
 #[tauri::command]
@@ -410,11 +436,16 @@ fn get_profile(state: &AppState, profile_id: &str) -> Result<Option<Profile>, St
 fn get_proxy(state: &AppState, proxy_id: &str) -> Result<Option<ProxyConfig>, String> {
     state
         .conn()?
-        .query_row("select json from proxies where id=?1", params![proxy_id], |row| {
-            let json: String = row.get(0)?;
-            serde_json::from_str::<ProxyConfig>(&json)
-                .map_err(|error| rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(error)))
-        })
+        .query_row(
+            "select json from proxies where id=?1",
+            params![proxy_id],
+            |row| {
+                let json: String = row.get(0)?;
+                serde_json::from_str::<ProxyConfig>(&json).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(error))
+                })
+            },
+        )
         .optional()
         .map_err(|error| error.to_string())
 }
@@ -467,8 +498,9 @@ fn row_to_profile(row: &rusqlite::Row<'_>) -> rusqlite::Result<Profile> {
         created_at: row.get(8)?,
         updated_at: row.get(9)?,
         last_launched_at: row.get(10)?,
-        settings: serde_json::from_str(&settings_json)
-            .map_err(|error| rusqlite::Error::FromSqlConversionFailure(11, Type::Text, Box::new(error)))?,
+        settings: serde_json::from_str(&settings_json).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(11, Type::Text, Box::new(error))
+        })?,
     })
 }
 
