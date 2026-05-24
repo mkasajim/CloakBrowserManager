@@ -60,6 +60,8 @@ const timezoneOptions =
     ? Intl.supportedValuesOf("timeZone")
     : fallbackTimezones;
 
+const SYSTEM_PROXY_ID = "__system_proxy__";
+
 function proxyLabel(proxy?: ProxyConfig) {
   if (!proxy) return "Direct";
   if (proxy.scheme === "system") return "System proxy";
@@ -105,6 +107,14 @@ export function App() {
     () => profiles.find((profile) => profile.id === selectedId) ?? profiles[0],
     [profiles, selectedId],
   );
+
+  const selectedProxy = useMemo(() => {
+    if (!selected?.proxyId) return undefined;
+    if (selected.proxyId === SYSTEM_PROXY_ID) {
+      return { id: SYSTEM_PROXY_ID, name: "System proxy", scheme: "system", host: "", port: 0 } satisfies ProxyConfig;
+    }
+    return proxies.find((item) => item.id === selected.proxyId);
+  }, [proxies, selected]);
 
   const filtered = profiles.filter((profile) => {
     const haystack = [profile.name, profile.groupName, profile.tags.join(" "), profile.settings.locale, profile.settings.timezone]
@@ -215,7 +225,7 @@ export function App() {
                     <td>
                       <span className={`status ${profile.status}`}>{profile.status}</span>
                     </td>
-                    <td>{proxyLabel(proxies.find((proxy) => proxy.id === profile.proxyId))}</td>
+                    <td>{profile.proxyId === SYSTEM_PROXY_ID ? "System proxy" : proxyLabel(proxies.find((proxy) => proxy.id === profile.proxyId))}</td>
                     <td>{profile.settings.platform}</td>
                     <td>
                       {profile.settings.locale}
@@ -247,7 +257,7 @@ export function App() {
 
           <ProfileInspector
             profile={selected}
-            proxy={selected ? proxies.find((item) => item.id === selected.proxyId) : undefined}
+            proxy={selectedProxy}
             onEdit={() => selected && setDraft(selected)}
             onDelete={() => selected && removeProfile(selected)}
             onLaunch={() => selected && run(selected)}
@@ -403,6 +413,7 @@ function ProfileEditor({
           <Field label="Proxy">
             <select value={profile.proxyId ?? ""} onChange={(event) => patch({ proxyId: event.target.value || undefined })}>
               <option value="">Direct</option>
+              <option value={SYSTEM_PROXY_ID}>System proxy</option>
               {proxies.map((proxy) => (
                 <option key={proxy.id} value={proxy.id}>
                   {proxyLabel(proxy)}

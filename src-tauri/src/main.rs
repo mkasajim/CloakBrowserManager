@@ -19,6 +19,7 @@ use tauri::{Manager, State};
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+const SYSTEM_PROXY_ID: &str = "__system_proxy__";
 
 #[derive(Default)]
 struct RunnerState {
@@ -302,6 +303,7 @@ fn launch_profile(
         "profile": profile,
         "profileDataDir": profile_dir,
         "proxy": match profile.proxy_id.as_ref() {
+            Some(proxy_id) if proxy_id == SYSTEM_PROXY_ID => Some(system_proxy_config()),
             Some(proxy_id) => get_proxy(&state, proxy_id)?,
             None => None,
         }
@@ -560,6 +562,21 @@ fn get_proxy(state: &AppState, proxy_id: &str) -> Result<Option<ProxyConfig>, St
         )
         .optional()
         .map_err(|error| error.to_string())
+}
+
+fn system_proxy_config() -> ProxyConfig {
+    ProxyConfig {
+        id: SYSTEM_PROXY_ID.to_string(),
+        name: "System proxy".to_string(),
+        scheme: "system".to_string(),
+        host: String::new(),
+        port: 0,
+        username: None,
+        password: None,
+        bypass: None,
+        last_test_status: None,
+        last_test_at: None,
+    }
 }
 
 fn save_profile_inner(state: &AppState, profile: &Profile) -> Result<(), String> {
