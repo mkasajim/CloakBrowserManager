@@ -5,6 +5,13 @@ description = "Local Windows profile manager for CloakBrowser"
 authors = ["CloakBrowser Local Manager"]
 edition = "2021"
 
+[package.metadata.tauri-winres]
+FileDescription = "CloakBrowser Local Manager"
+ProductName = "CloakBrowser Local Manager"
+ProductVersion = "0.1.0"
+OriginalFilename = "cloakbrowser-local-manager.exe"
+LegalCopyright = "Copyright (c) 2026 CloakBrowser Local Manager"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
