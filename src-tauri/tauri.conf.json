@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build && npm run runner:build",
+    "beforeBuildCommand": "npm run build && npm run runner:build && npm run runner:prepare-node",
     "frontendDist": "../dist"
   },
   "app": {
@@ -26,6 +26,11 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "resources": ["../runner/dist", "../runner/package.json", "../runner/node_modules"]
+    "resources": {
+      "../runner/bin": "runner/bin",
+      "../runner/dist": "runner/dist",
+      "../runner/package.json": "runner/package.json",
+      "../runner/node_modules": "runner/node_modules"
+    }
   }
 }

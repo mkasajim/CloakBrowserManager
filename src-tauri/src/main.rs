@@ -288,20 +288,36 @@ fn launch_profile(profile_id: String, state: State<AppState>, app: tauri::AppHan
     fs::write(&payload_path, serde_json::to_vec_pretty(&payload).map_err(|error| error.to_string())?)
         .map_err(|error| error.to_string())?;
 
-    let packaged_runner_script = app
-        .path()
-        .resource_dir()
-        .ok()
-        .map(|path| path.join("runner").join("dist").join("index.js"));
-    let dev_runner_script = PathBuf::from("runner").join("dist").join("index.js");
-    let runner_script = packaged_runner_script
-        .filter(|path| path.exists())
-        .unwrap_or(dev_runner_script);
+    let resource_dir = app.path().resource_dir().ok();
+    let runner_script = find_existing_path(
+        [
+            resource_dir
+                .as_ref()
+                .map(|path| path.join("runner").join("dist").join("index.js")),
+            resource_dir.as_ref().map(|path| path.join("dist").join("index.js")),
+            Some(PathBuf::from("runner").join("dist").join("index.js")),
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    let bundled_node = find_existing_path(
+        [
+            resource_dir
+                .as_ref()
+                .map(|path| path.join("runner").join("bin").join("node.exe")),
+            resource_dir.as_ref().map(|path| path.join("bin").join("node.exe")),
+        ]
+        .into_iter()
+        .flatten(),
+    );
 
     let mut message = "Runner started.".to_string();
-    if runner_script.exists() {
-        let child = Command::new("node")
-            .arg(runner_script)
+    if let Some(runner_script) = runner_script {
+        let mut command = bundled_node
+            .map(Command::new)
+            .unwrap_or_else(|| Command::new("node"));
+        let child = command
+            .arg(&runner_script)
             .arg("launch")
             .arg(&payload_path)
             .stdin(Stdio::null())
@@ -327,6 +343,10 @@ fn launch_profile(profile_id: String, state: State<AppState>, app: tauri::AppHan
     };
     record_event(&state, &event)?;
     Ok(event)
+}
+
+fn find_existing_path(paths: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
+    paths.into_iter().find(|path| path.exists())
 }
 
 #[tauri::command]

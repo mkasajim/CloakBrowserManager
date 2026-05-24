@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "runner:dev": "npm --prefix runner run dev",
-    "runner:build": "npm --prefix runner run build"
+    "runner:build": "npm --prefix runner run build",
+    "runner:prepare-node": "node scripts/prepare-runner-node.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.9.3",

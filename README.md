@@ -16,7 +16,7 @@ This app intentionally does **not** use Docker, VNC, noVNC, or a remote framebuf
 - Web UI builds and runs.
 - Runner builds.
 - Tauri source is present, but the desktop build requires Rust/Cargo on PATH.
-- The current runner is JS-based and invoked with Node. A standalone Windows runner sidecar exe is still tracked as a pending task in `CLOAKBROWSER_LOCAL_MANAGER_PLAN.md`.
+- Release builds bundle a Node runtime with the JS runner so installed and portable Windows builds can launch real browser profiles without a separate local Node install.
 
 ## Run UI Preview
 
@@ -39,6 +39,7 @@ The browser preview uses localStorage mocks because Tauri commands are only avai
 ```powershell
 npm run build
 npm run runner:build
+npm run runner:prepare-node
 ```
 
 ## Build Desktop App

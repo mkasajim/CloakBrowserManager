@@ -12,6 +12,8 @@ dist
 dist-ssr
 target
 src-tauri/target
+runner/bin/node.exe
+!runner/bin/.gitkeep
 *.local
 
 # Editor directories and files
