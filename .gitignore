@@ -26,3 +26,4 @@ runner/bin/node.exe
 *.njsproj
 *.sln
 *.sw?
+stitch_assets

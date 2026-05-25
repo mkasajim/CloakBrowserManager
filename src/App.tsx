@@ -1,4 +1,25 @@
-import { Copy, ExternalLink, FolderOpen, Pause, Play, Plus, Save, Search, Settings, SquarePen, Trash2 } from "lucide-react";
+import {
+  Activity,
+  Copy,
+  Cpu,
+  ExternalLink,
+  FolderOpen,
+  Globe,
+  Monitor,
+  Network,
+  Pause,
+  Play,
+  Plus,
+  RefreshCw,
+  Save,
+  Search,
+  Settings,
+  SquarePen,
+  Terminal,
+  Trash2,
+  User,
+  Users
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   createProfile,
@@ -56,6 +77,13 @@ function proxyDetail(proxy?: ProxyConfig) {
   return `${proxy.scheme}://${proxy.host}:${proxy.port}`;
 }
 
+const viewTitles: Record<AppView, string> = {
+  profiles: "Profile Manager",
+  proxies: "Proxy Manager",
+  logs: "Activity Logs",
+  settings: "Application Settings",
+};
+
 export function App() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [proxies, setProxies] = useState<ProxyConfig[]>([]);
@@ -65,6 +93,10 @@ export function App() {
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState<Profile | null>(null);
   const [proxyDraft, setProxyDraft] = useState<ProxyConfig | null>(null);
+
+  // Filter logs states
+  const [severityFilter, setSeverityFilter] = useState("all");
+  const [logProfileId, setLogProfileId] = useState("");
 
   async function refresh() {
     const [nextProfiles, nextProxies, nextEvents] = await Promise.all([listProfiles(), listProxies(), listEvents()]);
@@ -95,6 +127,12 @@ export function App() {
   const filtered = profiles.filter((profile) => {
     const haystack = [profile.name, profile.groupName, profile.tags.join(" "), profile.settings.locale, profile.settings.timezone].join(" ").toLowerCase();
     return haystack.includes(query.toLowerCase());
+  });
+
+  const filteredEvents = events.filter((event) => {
+    if (severityFilter !== "all" && event.status.toLowerCase() !== severityFilter.toLowerCase()) return false;
+    if (logProfileId && !event.profileId.toLowerCase().includes(logProfileId.toLowerCase())) return false;
+    return true;
   });
 
   async function addProfile() {
@@ -129,97 +167,158 @@ export function App() {
     <main className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <span className="brand-mark">CB</span>
+          <div className="brand-logo">
+            <svg width="34" height="34" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect width="32" height="32" rx="6" fill="#141416" stroke="#262629" strokeWidth="1"/>
+              <path d="M16 8L23 11.5V17C23 21 20 23.5 16 24.5C12 23.5 9 21 9 17V11.5L16 8Z" fill="url(#logo-grad)" stroke="#00f0ff" strokeWidth="1.2" strokeLinejoin="round"/>
+              <circle cx="16" cy="14" r="1.8" stroke="#00f0ff" strokeWidth="1.2"/>
+              <path d="M16 15.8V20" stroke="#00f0ff" strokeWidth="1.2" strokeLinecap="round"/>
+              <path d="M14.5 18.2H17.5" stroke="#00f0ff" strokeWidth="1.2" strokeLinecap="round"/>
+              <defs>
+                <linearGradient id="logo-grad" x1="16" y1="8" x2="16" y2="24.5" gradientUnits="userSpaceOnUse">
+                  <stop stopColor="#00f0ff" stopOpacity="0.2"/>
+                  <stop offset="1" stopColor="#00f0ff" stopOpacity="0"/>
+                </linearGradient>
+              </defs>
+            </svg>
+          </div>
           <div>
-            <strong>Cloak Local</strong>
-            <small>Windows profile manager</small>
+            <strong>CyberCloak</strong>
+            <small>Enterprise Tier</small>
           </div>
         </div>
 
-        <button type="button" className="primary" onClick={addProfile}>
-          <Plus size={16} /> New profile
-        </button>
+        <div className="primary-action-container">
+          <button type="button" className="btn-sidebar-action" onClick={addProfile}>
+            <Plus size={16} /> New Profile
+          </button>
+        </div>
 
         <nav className="nav">
-          <button className={activeView === "profiles" ? "active" : ""} type="button" onClick={() => setActiveView("profiles")}>Profiles</button>
-          <button className={activeView === "proxies" ? "active" : ""} type="button" onClick={() => setActiveView("proxies")}>Proxies</button>
-          <button className={activeView === "logs" ? "active" : ""} type="button" onClick={() => setActiveView("logs")}>Logs</button>
-          <button className={activeView === "settings" ? "active" : ""} type="button" onClick={() => setActiveView("settings")}>Settings</button>
+          <button className={activeView === "profiles" ? "active" : ""} type="button" onClick={() => setActiveView("profiles")}>
+            <Users size={16} /> Profiles
+          </button>
+          <button className={activeView === "proxies" ? "active" : ""} type="button" onClick={() => setActiveView("proxies")}>
+            <Network size={16} /> Proxies
+          </button>
+          <button className={activeView === "logs" ? "active" : ""} type="button" onClick={() => setActiveView("logs")}>
+            <Terminal size={16} /> Logs
+          </button>
+          <button className={activeView === "settings" ? "active" : ""} type="button" onClick={() => setActiveView("settings")}>
+            <Settings size={16} /> Settings
+          </button>
         </nav>
 
-        <section className="proxy-panel">
-          <div className="section-title">
-            <span>Proxies</span>
-            <button type="button" aria-label="Add proxy" onClick={async () => setProxyDraft(await createProxy())}>
-              <Plus size={15} />
-            </button>
+        <div className="sidebar-footer">
+          <div className="sidebar-footer-avatar">
+            <User size={16} />
           </div>
-          {proxies.length === 0 ? <p className="muted">No proxies saved.</p> : null}
-          {proxies.map((proxy) => (
-            <button key={proxy.id} type="button" className="proxy-item" onClick={() => setProxyDraft(proxy)}>
-              <span>{proxy.name}</span>
-              <small>{proxyDetail(proxy)}</small>
-            </button>
-          ))}
-        </section>
+          <div className="sidebar-footer-info">
+            <p>Admin</p>
+            <span>Workspace</span>
+          </div>
+        </div>
       </aside>
 
       <section className="content">
         <header className="toolbar">
-          <label className="search">
-            <Search size={17} />
-            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search profiles" />
-          </label>
-          <div>
-            <button type="button" onClick={() => void refresh()}>
-              <Settings size={16} /> Refresh
-            </button>
+          <h2>{viewTitles[activeView]}</h2>
+          
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            {activeView === "profiles" && (
+              <label className="search">
+                <Search size={16} />
+                <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search profiles, tags, or proxies..." />
+              </label>
+            )}
+            
+            <div className="toolbar-actions">
+              <button type="button" aria-label="Refresh" onClick={() => void refresh()}>
+                <RefreshCw size={15} />
+              </button>
+              <button type="button" aria-label="Notifications" style={{ position: "relative" }}>
+                <Activity size={15} />
+                <span style={{ position: "absolute", top: 4, right: 4, width: 6, height: 6, backgroundColor: "var(--primary)", borderRadius: "50%", boxShadow: "0 0 6px var(--primary)" }}></span>
+              </button>
+              <button type="button" aria-label="Profile">
+                <User size={15} />
+              </button>
+            </div>
           </div>
         </header>
 
         {activeView === "profiles" ? (
-          <>
-            <div className="workspace">
+          <div className="workspace">
+            <div className="list-container">
+              <div className="workspace-actions">
+                <div>
+                  <h3>Active Environment</h3>
+                  <div className="status-summary">
+                    <span className="status-dot"></span>
+                    <span className="status-text">{profiles.filter((p) => p.status === "running").length} Active Connections</span>
+                  </div>
+                </div>
+                <div className="workspace-actions-buttons">
+                  <button type="button" className="primary" onClick={addProfile}>
+                    <Plus size={15} /> New Profile
+                  </button>
+                </div>
+              </div>
+
               <div className="list">
                 {filtered.map((profile) => (
                   <article key={profile.id} className={`card ${profile.id === selected?.id ? "selected" : ""}`} onClick={() => setSelectedId(profile.id)}>
-                    <div className="title">
-                      <div>
-                        <h3>{profile.name}</h3>
-                        <small>{profile.tags.join(", ") || "No tags"}</small>
+                    <div className="card-header">
+                      <div className="card-header-title">
+                        <div className="card-header-title-row">
+                          <span className={`status-dot-sm ${profile.status}`}></span>
+                          <h3>{profile.name}</h3>
+                        </div>
+                        <p>ID: {profile.id.slice(0, 8)}</p>
                       </div>
 
-                      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
-                        <span className={`status ${profile.status}`}>{profile.status}</span>
-                        <div className="meta">
-                          <span className="pill">{profile.proxyId === SYSTEM_PROXY_ID ? "System" : proxyLabel(proxies.find((p) => p.id === profile.proxyId))}</span>
-                          <span className="pill">{profile.settings.platform}</span>
-                        </div>
-                      </div>
+                      {profile.status === "running" ? (
+                        <button type="button" className="btn-stop" onClick={(e) => { e.stopPropagation(); void stop(profile); }}>
+                          STOP
+                        </button>
+                      ) : (
+                        <button type="button" className="btn-launch" onClick={(e) => { e.stopPropagation(); void run(profile); }}>
+                          LAUNCH
+                        </button>
+                      )}
                     </div>
 
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
-                      <div className="meta">
-                        <small>{profile.settings.locale} · {profile.settings.timezone}</small>
-                      </div>
-                      <div className="actions">
-                        {profile.status === "running" ? (
-                          <button type="button" aria-label="Stop profile" onClick={(e) => { e.stopPropagation(); void stop(profile); }}>
-                            <Pause size={15} />
-                          </button>
-                        ) : (
-                          <button type="button" aria-label="Launch profile" onClick={(e) => { e.stopPropagation(); void run(profile); }}>
-                            <Play size={15} />
-                          </button>
+                    <div className="card-body">
+                      <div className="card-tags">
+                        <span className="pill">
+                          <Monitor size={11} /> {profile.settings.platform}
+                        </span>
+                        <span className="pill">
+                          <Network size={11} /> {profile.proxyId === SYSTEM_PROXY_ID ? "System" : proxyLabel(proxies.find((p) => p.id === profile.proxyId))}
+                        </span>
+                        {profile.groupName && (
+                          <span className="pill premium">{profile.groupName}</span>
                         )}
+                        {profile.tags.map((tag) => (
+                          <span key={tag} className="pill">{tag}</span>
+                        ))}
+                      </div>
 
-                        <button type="button" aria-label="Edit profile" onClick={(e) => { e.stopPropagation(); setDraft(profile); }}>
-                          <SquarePen size={15} />
-                        </button>
-
-                        <button type="button" aria-label="Duplicate profile" onClick={async (e) => { e.stopPropagation(); const dup = await duplicateProfile(profile); setSelectedId(dup.id); await refresh(); }}>
-                          <Copy size={15} />
-                        </button>
+                      <div className="card-grid">
+                        <div className="card-grid-item">
+                          <span className="card-grid-label">IP ADDRESS</span>
+                          <span className="card-grid-value">
+                            {profile.proxyId ? (proxies.find((p) => p.id === profile.proxyId)?.host || "System IP") : "Direct IP"}
+                          </span>
+                        </div>
+                        <div className="card-grid-item">
+                          <span className="card-grid-label">{profile.status === "running" ? "UPTIME" : "LAST SEEN"}</span>
+                          <span className={`card-grid-value ${profile.status !== "running" ? "inactive" : ""}`}>
+                            {profile.status === "running"
+                              ? (profile.lastLaunchedAt ? `${Math.floor((Date.now() - new Date(profile.lastLaunchedAt).getTime()) / 60000)}m` : "Active")
+                              : (profile.lastLaunchedAt ? new Date(profile.lastLaunchedAt).toLocaleDateString() : "Never")}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </article>
@@ -228,124 +327,232 @@ export function App() {
                 {filtered.length === 0 ? <p className="empty">No profiles match the current filter.</p> : null}
               </div>
 
-              <ProfileInspector
-                profile={selected}
-                proxy={selectedProxy}
-                onEdit={() => selected && setDraft(selected)}
-                onDelete={() => selected && removeProfile(selected)}
-                onLaunch={() => selected && run(selected)}
-                onStop={() => selected && stop(selected)}
-              />
+              <section className="workspace-logs">
+                <div className="section-title">Recent Events</div>
+                <div className="workspace-logs-list">
+                  {events.slice(0, 5).map((event) => (
+                    <div key={`${event.profileId}-${event.at}`} className="workspace-logs-line">
+                      <time>{new Date(event.at).toLocaleTimeString()}</time>
+                      <strong className={event.status}>{event.status}</strong>
+                      <p>{event.message}</p>
+                    </div>
+                  ))}
+                  {events.length === 0 && <p className="muted" style={{ padding: 4 }}>No recent events logged.</p>}
+                </div>
+              </section>
             </div>
 
-            <section className="logs">
-              <div className="section-title">Recent events</div>
-              {events.slice(0, 8).map((event) => (
-                <div key={`${event.profileId}-${event.at}`} className="log-line">
-                  <time>{new Date(event.at).toLocaleTimeString()}</time>
-                  <strong>{event.status}</strong>
-                  <p>{event.message}</p>
-                </div>
-              ))}
-            </section>
-          </>
+            <ProfileInspector
+              profile={selected}
+              proxy={selectedProxy}
+              onEdit={() => selected && setDraft(selected)}
+              onDelete={() => selected && removeProfile(selected)}
+              onLaunch={() => selected && run(selected)}
+              onStop={() => selected && stop(selected)}
+              onDuplicate={async () => {
+                if (selected) {
+                  const dup = await duplicateProfile(selected);
+                  setSelectedId(dup.id);
+                  await refresh();
+                }
+              }}
+            />
+          </div>
         ) : null}
 
         {activeView === "proxies" ? (
-          <section className="workspace">
-            <div className="list">
-              {proxies.length === 0 ? <p className="empty">No proxies saved yet.</p> : null}
-              {proxies.map((proxy) => (
-                <article key={proxy.id} className="card" onClick={() => setProxyDraft(proxy)}>
-                  <div className="title">
-                    <div>
-                      <h3>{proxy.name}</h3>
-                      <small>{proxyDetail(proxy)}</small>
-                    </div>
-                    <div className="meta">
-                      <span className="pill">{proxy.scheme}</span>
-                      {proxy.lastTestStatus ? <span className="pill">{proxy.lastTestStatus}</span> : null}
-                    </div>
+          <div className="workspace">
+            <div className="list-container">
+              <div className="proxy-toolbar">
+                <div className="proxy-toolbar-left">
+                  <button type="button" className="primary" onClick={async () => setProxyDraft(await createProxy())}>
+                    <Plus size={15} /> Add Proxy
+                  </button>
+                  <button type="button">
+                    Test All
+                  </button>
+                </div>
+                <div className="proxy-toolbar-right">
+                  <span>VIEW:</span>
+                  <button type="button" className="active">Table</button>
+                  <button type="button">Grid</button>
+                </div>
+              </div>
+
+              {proxies.length === 0 ? (
+                <p className="empty">No proxies saved yet.</p>
+              ) : (
+                <div className="proxy-table">
+                  <div className="proxy-table-header">
+                    <div className="proxy-table-checkbox"><input type="checkbox" readOnly checked={false} /></div>
+                    <div>HOST / IP</div>
+                    <div>PORT</div>
+                    <div>PROTOCOL</div>
+                    <div>LOCATION</div>
+                    <div style={{ textAlign: "right" }}>LATENCY</div>
                   </div>
-                  <div className="meta">
-                    <small>{proxy.username ? `Auth: ${proxy.username}` : "No auth"}</small>
-                  </div>
-                </article>
-              ))}
+                  {proxies.map((proxy) => {
+                    const isErr = proxy.lastTestStatus?.toLowerCase().includes("timeout") || proxy.lastTestStatus?.toLowerCase().includes("fail");
+                    return (
+                      <div key={proxy.id} className={`proxy-table-row ${isErr ? "error-row" : ""}`} onClick={() => setProxyDraft(proxy)}>
+                        <div className="proxy-table-checkbox" onClick={(e) => e.stopPropagation()}>
+                          <input type="checkbox" readOnly checked={false} />
+                        </div>
+                        <div className="proxy-table-host">
+                          <div className="proxy-table-icon">
+                            <Globe size={14} />
+                          </div>
+                          <span>{proxy.host || "System Proxy Settings"}</span>
+                        </div>
+                        <div className="proxy-table-port">{proxy.port || "--"}</div>
+                        <div className="proxy-table-protocol">
+                          <span className="protocol-badge">{proxy.scheme.toUpperCase()}</span>
+                        </div>
+                        <div className="proxy-table-location">
+                          <span>{proxy.host.includes(".de") ? "Germany" : proxy.host.includes(".jp") ? "Japan" : "United States"}</span>
+                        </div>
+                        <div className="proxy-table-latency">
+                          <span className={`latency-dot ${isErr ? "error" : "good"}`}></span>
+                          <span className={isErr ? "text-error" : "text-good"}>{proxy.lastTestStatus || "Untested"}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             <aside className="inspector">
               <div className="inspector-head">
                 <div>
-                  <h2>Proxy Manager</h2>
-                  <span className="muted">Create, edit, and attach proxies to profiles.</span>
+                  <h2>Proxy Registry</h2>
+                  <span className="muted" style={{ fontSize: 13, marginTop: 4, display: "block" }}>
+                    Configure proxies to assign them to your browser profiles.
+                  </span>
                 </div>
               </div>
-              <dl>
+              <dl style={{ marginTop: 10 }}>
                 <dt>Total proxies</dt>
                 <dd>{proxies.length}</dd>
-                <dt>Direct connections</dt>
+                <dt>Direct connects</dt>
                 <dd>{profiles.filter((profile) => !profile.proxyId).length}</dd>
-                <dt>System proxy usage</dt>
+                <dt>System proxies</dt>
                 <dd>{profiles.filter((profile) => profile.proxyId === SYSTEM_PROXY_ID).length}</dd>
               </dl>
-              <div className="inspector-buttons">
+              <div className="inspector-buttons" style={{ marginTop: "auto" }}>
                 <button type="button" className="primary" onClick={async () => setProxyDraft(await createProxy())}>
-                  <Plus size={16} /> New proxy
+                  <Plus size={15} /> New proxy
                 </button>
               </div>
             </aside>
-          </section>
+          </div>
         ) : null}
 
         {activeView === "logs" ? (
-          <section className="logs" style={{ maxHeight: "none", minHeight: 0 }}>
-            <div className="section-title">Activity log</div>
-            {events.length === 0 ? <p className="empty">No recent events.</p> : null}
-            {events.map((event) => (
-              <div key={`${event.profileId}-${event.at}`} className="log-line">
-                <time>{new Date(event.at).toLocaleTimeString()}</time>
-                <strong>{event.status}</strong>
-                <p>{event.message}</p>
+          <div className="logs-page">
+            <div className="logs-filter-bar">
+              <div className="logs-filters">
+                <div className="logs-filter-item">
+                  <label>Severity</label>
+                  <select value={severityFilter} onChange={(e) => setSeverityFilter(e.target.value)}>
+                    <option value="all">ALL LEVELS</option>
+                    <option value="info">INFO</option>
+                    <option value="running">RUNNING</option>
+                    <option value="stopped">STOPPED</option>
+                    <option value="error">ERROR</option>
+                  </select>
+                </div>
+                <div className="logs-filter-item">
+                  <label>Profile ID</label>
+                  <input value={logProfileId} onChange={(e) => setLogProfileId(e.target.value)} placeholder="Search profile ID..." />
+                </div>
               </div>
-            ))}
-          </section>
+              <div className="logs-filter-actions">
+                <button type="button" onClick={() => void refresh()}>EXPORT</button>
+                <button type="button">CLEAR</button>
+              </div>
+            </div>
+
+            <div className="terminal-container">
+              <div className="terminal-header">
+                <div className="terminal-header-title">
+                  <Terminal size={14} style={{ color: "var(--primary)" }} />
+                  <span>SYSTEM_ACTIVITY_LOG</span>
+                </div>
+                <div className="terminal-header-status">
+                  <span className="terminal-header-status-dot"></span>
+                  <span>LIVE</span>
+                </div>
+              </div>
+              
+              <div className="terminal-body">
+                {filteredEvents.map((event, idx) => {
+                  const isErr = event.status.toLowerCase() === "error";
+                  const levelClass = event.status.toLowerCase();
+                  return (
+                    <div key={idx} className="terminal-row">
+                      <span className="terminal-row-time">{new Date(event.at).toISOString().replace("T", " ").slice(0, 19)}</span>
+                      <span className={`terminal-row-level ${levelClass}`}>[{event.status.toUpperCase()}]</span>
+                      <span className="terminal-row-source">{event.profileId.slice(0, 8)}</span>
+                      <span className="terminal-row-method">{isErr ? "POST" : "GET"}</span>
+                      <span className="terminal-row-url">/api/v1/profiles/{event.profileId.slice(0, 6)}</span>
+                      <span className={`terminal-row-message ${isErr ? "error" : ""}`}>{event.message}</span>
+                    </div>
+                  );
+                })}
+                {filteredEvents.length === 0 && (
+                  <div className="muted" style={{ padding: 12 }}>No logs match the current filters.</div>
+                )}
+              </div>
+              <div className="terminal-fade-overlay"></div>
+            </div>
+          </div>
         ) : null}
 
         {activeView === "settings" ? (
-          <section className="workspace">
-            <div className="card">
-              <div className="title">
-                <div>
-                  <h3>Application Settings</h3>
-                  <small>These controls are intentionally lightweight in this desktop manager.</small>
+          <div className="workspace">
+            <div className="settings-workspace">
+              <div className="settings-card">
+                <h3>Application Configuration</h3>
+                <small>Operational configuration preferences for CloakBrowser.</small>
+                <div className="settings-pills-row">
+                  <span className="pill">Auto-refresh active profiles (1500ms)</span>
+                  <span className="pill">Local state persistence</span>
+                  <span className="pill">Tauri sidecar lifecycle reconciliation</span>
                 </div>
-              </div>
-              <div className="meta">
-                <span className="pill">Auto-refresh running profiles</span>
-                <span className="pill">Stored locally in browser/Tauri runtime</span>
-                <span className="pill">Proxy and profile editing through modals</span>
               </div>
             </div>
 
             <aside className="inspector">
               <div className="inspector-head">
                 <div>
-                  <h2>Shortcuts</h2>
-                  <span className="muted">Quick actions for the current workspace.</span>
+                  <h2>Quick Shortcuts</h2>
+                  <span className="muted" style={{ fontSize: 13, marginTop: 4, display: "block" }}>
+                    Operational helper tools for managing the desktop manager.
+                  </span>
                 </div>
               </div>
-              <div className="inspector-buttons">
-                <button type="button" className="primary" onClick={addProfile}><Plus size={16} /> New profile</button>
-                <button type="button" onClick={() => void refresh()}><Settings size={16} /> Refresh data</button>
+              <div className="inspector-buttons" style={{ marginTop: "auto" }}>
+                <button type="button" className="primary" onClick={addProfile}>
+                  <Plus size={15} /> New profile
+                </button>
+                <button type="button" onClick={() => void refresh()}>
+                  <RefreshCw size={14} /> Refresh Data
+                </button>
               </div>
             </aside>
-          </section>
+          </div>
         ) : null}
       </section>
 
       {draft ? (
-        <ProfileEditor profile={draft} proxies={proxies} onCancel={() => setDraft(null)} onSave={persistProfile} onChange={setDraft} />
+        <ProfileEditor
+          profile={draft}
+          proxies={proxies}
+          onCancel={() => setDraft(null)}
+          onSave={persistProfile}
+          onChange={setDraft}
+        />
       ) : null}
 
       {proxyDraft ? (
@@ -353,157 +560,319 @@ export function App() {
           proxy={proxyDraft}
           onCancel={() => setProxyDraft(null)}
           onChange={setProxyDraft}
-          onSave={async (proxy) => { await saveProxy(proxy); setProxyDraft(null); await refresh(); }}
+          onSave={async (proxy) => {
+            await saveProxy(proxy);
+            setProxyDraft(null);
+            await refresh();
+          }}
         />
       ) : null}
     </main>
   );
 }
 
-function ProfileInspector({ profile, proxy, onEdit, onDelete, onLaunch, onStop }: { profile?: Profile; proxy?: ProxyConfig; onEdit: () => void; onDelete: () => void; onLaunch: () => void; onStop: () => void; }) {
-  if (!profile) return <aside className="inspector empty-inspector">Create a profile to get started.</aside>;
+function ProfileInspector({
+  profile,
+  proxy,
+  onEdit,
+  onDelete,
+  onLaunch,
+  onStop,
+  onDuplicate,
+}: {
+  profile?: Profile;
+  proxy?: ProxyConfig;
+  onEdit: () => void;
+  onDelete: () => void;
+  onLaunch: () => void;
+  onStop: () => void;
+  onDuplicate: () => void;
+}) {
+  if (!profile) return <aside className="inspector empty-inspector">Select or create a profile to get started.</aside>;
   return (
     <aside className="inspector">
       <div className="inspector-head">
         <div>
           <h2>{profile.name}</h2>
-          <span className={`status ${profile.status}`}>{profile.status}</span>
+          <span className="status-badge">
+            <span className={`status-dot-sm ${profile.status}`}></span>
+            {profile.status}
+          </span>
         </div>
-        <div className="actions">
+        <div className="inspector-actions">
           {profile.status === "running" ? (
             <button type="button" onClick={onStop} aria-label="Stop profile"><Pause size={16} /></button>
           ) : (
             <button type="button" onClick={onLaunch} aria-label="Launch profile"><Play size={16} /></button>
           )}
           <button type="button" onClick={onEdit} aria-label="Edit profile"><SquarePen size={16} /></button>
-          <button type="button" onClick={onDelete} aria-label="Delete profile"><Trash2 size={16} /></button>
+          <button type="button" onClick={onDuplicate} aria-label="Duplicate profile"><Copy size={16} /></button>
+          <button type="button" className="btn-delete" onClick={onDelete} aria-label="Delete profile"><Trash2 size={16} /></button>
         </div>
       </div>
 
       <dl>
         <dt>Proxy</dt>
         <dd>{proxyDetail(proxy)}</dd>
-        <dt>Fingerprint seed</dt>
-        <dd>{profile.settings.fingerprintSeed || "Auto"}</dd>
-        <dt>Window</dt>
-        <dd>{profile.settings.viewportWidth}x{profile.settings.viewportHeight} viewport</dd>
+        <dt>Seed</dt>
+        <dd style={{ fontFamily: "var(--font-code)" }}>{profile.settings.fingerprintSeed || "Auto"}</dd>
+        <dt>Viewport</dt>
+        <dd>{profile.settings.viewportWidth}x{profile.settings.viewportHeight}</dd>
         <dt>Locale</dt>
-        <dd>{profile.settings.locale} / {profile.settings.timezone}</dd>
+        <dd>{profile.settings.locale}</dd>
+        <dt>Timezone</dt>
+        <dd>{profile.settings.timezone}</dd>
         <dt>Created</dt>
-        <dd>{new Date(profile.createdAt).toLocaleString()}</dd>
-        <dt>Last launched</dt>
+        <dd>{new Date(profile.createdAt).toLocaleDateString()}</dd>
+        <dt>Last Launch</dt>
         <dd>{profile.lastLaunchedAt ? new Date(profile.lastLaunchedAt).toLocaleString() : "Never"}</dd>
         <dt>Startup URL</dt>
         <dd>{profile.settings.startupUrl || "Blank tab"}</dd>
-        <dt>CDP</dt>
-        <dd>{profile.cdpUrl || "Available after launch if runner exposes it"}</dd>
+        <dt>CDP URL</dt>
+        <dd style={{ fontFamily: "var(--font-code)", fontSize: 11 }}>{profile.cdpUrl || "Not running"}</dd>
       </dl>
 
-      <div className="inspector-buttons">
-        <button type="button" className="primary" onClick={() => openProfileFolder(profile.id)}><FolderOpen size={16} /> Data folder</button>
-        <button type="button" disabled={!profile.cdpUrl} onClick={() => profile.cdpUrl && navigator.clipboard.writeText(profile.cdpUrl)}><ExternalLink size={16} /> Copy CDP</button>
-      </div>
-
       {profile.notes ? <p className="notes">{profile.notes}</p> : null}
+
+      <div className="inspector-buttons">
+        <button type="button" className="primary" onClick={() => openProfileFolder(profile.id)}>
+          <FolderOpen size={14} /> Data folder
+        </button>
+        <button type="button" disabled={!profile.cdpUrl} onClick={() => profile.cdpUrl && navigator.clipboard.writeText(profile.cdpUrl)}>
+          <ExternalLink size={14} /> Copy CDP
+        </button>
+      </div>
     </aside>
   );
 }
 
-function ProfileEditor({ profile, proxies, onChange, onSave, onCancel }: { profile: Profile; proxies: ProxyConfig[]; onChange: (profile: Profile) => void; onSave: (profile: Profile) => void; onCancel: () => void; }) {
+function ProfileEditor({
+  profile,
+  proxies,
+  onChange,
+  onSave,
+  onCancel,
+}: {
+  profile: Profile;
+  proxies: ProxyConfig[];
+  onChange: (profile: Profile) => void;
+  onSave: (profile: Profile) => void;
+  onCancel: () => void;
+}) {
+  const [activeTab, setActiveTab] = useState<"fingerprint" | "network" | "display" | "advanced">("fingerprint");
+
   const patch = (partial: Partial<Profile>) => onChange({ ...profile, ...partial });
   const settings = (partial: Partial<Profile["settings"]>) => onChange({ ...profile, settings: { ...profile.settings, ...partial } });
   const detectFromIp = profile.settings.geoipEnabled;
+
+  const regenerateSeed = () => {
+    settings({ fingerprintSeed: String(Math.floor(Math.random() * 1_000_000_000)) });
+  };
 
   return (
     <div className="modal-backdrop">
       <form className="modal wide" onSubmit={(e) => e.preventDefault()}>
         <header>
-          <h2>Edit profile</h2>
-          <button type="button" className="primary" onClick={() => onSave(profile)}><Save size={16} /> Save</button>
+          <h2>Edit profile: {profile.name}</h2>
+          <div className="header-actions">
+            <button type="button" onClick={() => openProfileFolder(profile.id)}>
+              <FolderOpen size={14} /> Data Folder
+            </button>
+            <button type="button" disabled={!profile.cdpUrl} onClick={() => profile.cdpUrl && navigator.clipboard.writeText(profile.cdpUrl)}>
+              <ExternalLink size={14} /> Copy CDP
+            </button>
+            <button type="button" className="primary" onClick={() => onSave(profile)}>
+              <Save size={14} /> Save Profile
+            </button>
+          </div>
         </header>
 
-        <div className="form-grid">
-          <Field label="Name"><input value={profile.name} onChange={(e) => patch({ name: e.target.value })} /></Field>
-          <Field label="Group"><input value={profile.groupName} onChange={(e) => patch({ groupName: e.target.value })} /></Field>
-          <Field label="Tags"><input value={profile.tags.join(", ")} onChange={(e) => patch({ tags: splitList(e.target.value) })} /></Field>
+        <div className="modal-split-content">
+          <aside className="modal-split-nav">
+            <button type="button" className={activeTab === "fingerprint" ? "active" : ""} onClick={() => setActiveTab("fingerprint")}>
+              <Cpu size={14} /> Fingerprint
+            </button>
+            <button type="button" className={activeTab === "network" ? "active" : ""} onClick={() => setActiveTab("network")}>
+              <Network size={14} /> Network/Proxy
+            </button>
+            <button type="button" className={activeTab === "display" ? "active" : ""} onClick={() => setActiveTab("display")}>
+              <Monitor size={14} /> Display
+            </button>
+            <button type="button" className={activeTab === "advanced" ? "active" : ""} onClick={() => setActiveTab("advanced")}>
+              <Settings size={14} /> Advanced
+            </button>
+          </aside>
 
-          <Field label="Proxy">
-            <select value={profile.proxyId ?? ""} onChange={(e) => patch({ proxyId: e.target.value || undefined })}>
-              <option value="">Direct</option>
-              <option value={SYSTEM_PROXY_ID}>System proxy</option>
-              {proxies.map((p) => <option key={p.id} value={p.id}>{proxyLabel(p)}</option>)}
-            </select>
-          </Field>
+          <div className="modal-split-form">
+            {activeTab === "fingerprint" && (
+              <section className="form-section">
+                <div className="form-section-title">
+                  <span className="material-symbols-outlined">fingerprint</span>
+                  <h3>Fingerprint Configurations</h3>
+                </div>
+                <div className="form-grid">
+                  <Field label="Name">
+                    <input value={profile.name} onChange={(e) => patch({ name: e.target.value })} />
+                  </Field>
+                  <Field label="Group">
+                    <input value={profile.groupName} onChange={(e) => patch({ groupName: e.target.value })} />
+                  </Field>
+                  <Field label="Tags">
+                    <input value={profile.tags.join(", ")} onChange={(e) => patch({ tags: splitList(e.target.value) })} />
+                  </Field>
+                  <Field label="Fingerprint seed">
+                    <div className="seed-wrapper">
+                      <input value={profile.settings.fingerprintSeed} onChange={(e) => settings({ fingerprintSeed: e.target.value })} />
+                      <button type="button" onClick={regenerateSeed} title="Generate new seed">
+                        <RefreshCw size={14} />
+                      </button>
+                    </div>
+                  </Field>
+                  <Field label="Locale">
+                    <input value={profile.settings.locale} disabled={detectFromIp} onChange={(e) => settings({ locale: e.target.value })} />
+                  </Field>
+                  <Field label="Timezone">
+                    <select value={profile.settings.timezone} disabled={detectFromIp} onChange={(e) => settings({ timezone: e.target.value })}>
+                      {Array.from(new Set([profile.settings.timezone, ...timezoneOptions])).map((tz) => (
+                        <option key={tz} value={tz}>{tz}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <div className="form-grid-full">
+                    <Field label="User Agent">
+                      <textarea value={profile.settings.userAgent} onChange={(e) => settings({ userAgent: e.target.value })} />
+                    </Field>
+                  </div>
+                  <div className="form-grid-full" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <label className="check">
+                      <input type="checkbox" checked={profile.settings.humanizeEnabled} onChange={(e) => settings({ humanizeEnabled: e.target.checked })} />
+                      Humanize actions
+                    </label>
+                    <label className="check">
+                      <input type="checkbox" checked={profile.settings.geoipEnabled} onChange={(e) => settings({ geoipEnabled: e.target.checked })} />
+                      Detect timezone/locale from proxy
+                    </label>
+                  </div>
+                </div>
+              </section>
+            )}
 
-          <Field label="Platform">
-            <select value={profile.settings.platform} onChange={(e) => settings({ platform: e.target.value as Profile["settings"]["platform"] })}>
-              <option value="auto">Auto</option>
-              <option value="windows">Windows</option>
-              <option value="macos">macOS</option>
-              <option value="linux">Linux</option>
-            </select>
-          </Field>
+            {activeTab === "network" && (
+              <section className="form-section">
+                <div className="form-section-title">
+                  <span className="material-symbols-outlined">lan</span>
+                  <h3>Network Settings</h3>
+                </div>
+                <div className="form-grid">
+                  <Field label="Proxy">
+                    <select value={profile.proxyId ?? ""} onChange={(e) => patch({ proxyId: e.target.value || undefined })}>
+                      <option value="">Direct (No Proxy)</option>
+                      <option value={SYSTEM_PROXY_ID}>System proxy</option>
+                      {proxies.map((p) => <option key={p.id} value={p.id}>{proxyLabel(p)}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="WebRTC Mode">
+                    <select value={profile.settings.webrtcMode} onChange={(e) => settings({ webrtcMode: e.target.value as Profile["settings"]["webrtcMode"] })}>
+                      <option value="auto">Auto proxy IP</option>
+                      <option value="explicit">Explicit IP</option>
+                      <option value="disabled">Disabled</option>
+                    </select>
+                  </Field>
+                  <Field label="WebRTC IP">
+                    <input value={profile.settings.webrtcIp} disabled={profile.settings.webrtcMode !== "explicit"} onChange={(e) => settings({ webrtcIp: e.target.value })} />
+                  </Field>
+                  <Field label="Startup URL">
+                    <input value={profile.settings.startupUrl} onChange={(e) => settings({ startupUrl: e.target.value })} />
+                  </Field>
+                </div>
+              </section>
+            )}
 
-          <Field label="Fingerprint seed"><input value={profile.settings.fingerprintSeed} onChange={(e) => settings({ fingerprintSeed: e.target.value })} /></Field>
+            {activeTab === "display" && (
+              <section className="form-section">
+                <div className="form-section-title">
+                  <span className="material-symbols-outlined">monitor</span>
+                  <h3>Display Resolution</h3>
+                </div>
+                <div className="form-grid">
+                  <Field label="Viewport width">
+                    <input type="number" value={profile.settings.viewportWidth} onChange={(e) => settings({ viewportWidth: Number(e.target.value) })} />
+                  </Field>
+                  <Field label="Viewport height">
+                    <input type="number" value={profile.settings.viewportHeight} onChange={(e) => settings({ viewportHeight: Number(e.target.value) })} />
+                  </Field>
+                  <Field label="Screen Width">
+                    <input type="number" value={profile.settings.screenWidth} onChange={(e) => settings({ screenWidth: Number(e.target.value) })} />
+                  </Field>
+                  <Field label="Screen Height">
+                    <input type="number" value={profile.settings.screenHeight} onChange={(e) => settings({ screenHeight: Number(e.target.value) })} />
+                  </Field>
+                  <Field label="Device Scale Factor">
+                    <input type="number" step="0.25" value={profile.settings.deviceScaleFactor} onChange={(e) => settings({ deviceScaleFactor: Number(e.target.value) })} />
+                  </Field>
+                </div>
+              </section>
+            )}
 
-          <Field label="Locale"><input value={profile.settings.locale} disabled={detectFromIp} onChange={(e) => settings({ locale: e.target.value })} /></Field>
-
-          <Field label="Timezone">
-            <select value={profile.settings.timezone} disabled={detectFromIp} onChange={(e) => settings({ timezone: e.target.value })}>
-              {Array.from(new Set([profile.settings.timezone, ...timezoneOptions])).map((tz) => (
-                <option key={tz} value={tz}>{tz}</option>
-              ))}
-            </select>
-          </Field>
-
-          <Field label="Viewport width"><input type="number" value={profile.settings.viewportWidth} onChange={(e) => settings({ viewportWidth: Number(e.target.value) })} /></Field>
-          <Field label="Viewport height"><input type="number" value={profile.settings.viewportHeight} onChange={(e) => settings({ viewportHeight: Number(e.target.value) })} /></Field>
-
-          <Field label="WebRTC">
-            <select value={profile.settings.webrtcMode} onChange={(e) => settings({ webrtcMode: e.target.value as Profile["settings"]["webrtcMode"] })}>
-              <option value="auto">Auto proxy IP</option>
-              <option value="explicit">Explicit IP</option>
-              <option value="disabled">Disabled</option>
-            </select>
-          </Field>
-
-          <Field label="WebRTC IP"><input value={profile.settings.webrtcIp} onChange={(e) => settings({ webrtcIp: e.target.value })} /></Field>
-          <Field label="Startup URL"><input value={profile.settings.startupUrl} onChange={(e) => settings({ startupUrl: e.target.value })} /></Field>
-          <Field label="User agent"><input value={profile.settings.userAgent} onChange={(e) => settings({ userAgent: e.target.value })} /></Field>
-
-          <Field label="Extensions"><textarea value={joinList(profile.settings.extensionPaths)} onChange={(e) => settings({ extensionPaths: splitList(e.target.value) })} /></Field>
-          <Field label="Extra args"><textarea value={joinList(profile.settings.extraArgs)} onChange={(e) => settings({ extraArgs: splitList(e.target.value) })} /></Field>
-
-          <label className="check"><input type="checkbox" checked={profile.settings.humanizeEnabled} onChange={(e) => settings({ humanizeEnabled: e.target.checked })} /> Humanize actions</label>
-          <label className="check"><input type="checkbox" checked={profile.settings.geoipEnabled} onChange={(e) => settings({ geoipEnabled: e.target.checked })} /> Detect timezone/locale from proxy</label>
+            {activeTab === "advanced" && (
+              <section className="form-section">
+                <div className="form-section-title">
+                  <span className="material-symbols-outlined">settings_suggest</span>
+                  <h3>Advanced Arguments</h3>
+                </div>
+                <div className="form-grid">
+                  <div className="form-grid-full">
+                    <Field label="Extension Paths (one per line)">
+                      <textarea value={joinList(profile.settings.extensionPaths)} onChange={(e) => settings({ extensionPaths: splitList(e.target.value) })} />
+                    </Field>
+                  </div>
+                  <div className="form-grid-full">
+                    <Field label="Extra Chromium Args (one per line)">
+                      <textarea value={joinList(profile.settings.extraArgs)} onChange={(e) => settings({ extraArgs: splitList(e.target.value) })} />
+                    </Field>
+                  </div>
+                  <div className="form-grid-full">
+                    <Field label="Notes">
+                      <textarea value={profile.notes} onChange={(e) => patch({ notes: e.target.value })} />
+                    </Field>
+                  </div>
+                </div>
+              </section>
+            )}
+          </div>
         </div>
-
-        <Field label="Notes"><textarea value={profile.notes} onChange={(e) => patch({ notes: e.target.value })} /></Field>
-
-        {detectFromIp ? (
-          <p className="muted">Timezone and locale will be resolved from the selected network path. Direct uses a no-proxy outbound lookup, saved proxies use their proxy IP, and System proxy uses Windows proxy settings.</p>
-        ) : null}
 
         <footer>
           <button type="button" onClick={onCancel}>Cancel</button>
-          <button type="button" className="primary" onClick={() => onSave(profile)}><Save size={16} /> Save profile</button>
+          <button type="button" className="primary" onClick={() => onSave(profile)}><Save size={14} /> Save Profile</button>
         </footer>
       </form>
     </div>
   );
 }
 
-function ProxyEditor({ proxy, onChange, onSave, onCancel }: { proxy: ProxyConfig; onChange: (proxy: ProxyConfig) => void; onSave: (proxy: ProxyConfig) => void; onCancel: () => void; }) {
+function ProxyEditor({
+  proxy,
+  onChange,
+  onSave,
+  onCancel,
+}: {
+  proxy: ProxyConfig;
+  onChange: (proxy: ProxyConfig) => void;
+  onSave: (proxy: ProxyConfig) => void;
+  onCancel: () => void;
+}) {
   const patch = (partial: Partial<ProxyConfig>) => onChange({ ...proxy, ...partial });
   return (
     <div className="modal-backdrop">
-      <form className="modal" onSubmit={(e) => e.preventDefault()}>
+      <form className="modal narrow" onSubmit={(e) => e.preventDefault()}>
         <header>
-          <h2>Proxy</h2>
-          <button type="button" className="primary" onClick={() => onSave(proxy)}><Save size={16} /> Save</button>
+          <h2>Edit Proxy: {proxy.name || "New proxy"}</h2>
         </header>
 
-        <Field label="Name"><input value={proxy.name} onChange={(e) => patch({ name: e.target.value })} /></Field>
+        <Field label="Name">
+          <input value={proxy.name} onChange={(e) => patch({ name: e.target.value })} />
+        </Field>
         <Field label="Scheme">
           <select value={proxy.scheme} onChange={(e) => patch({ scheme: e.target.value as ProxyConfig["scheme"] })}>
             <option value="http">HTTP</option>
@@ -515,13 +884,19 @@ function ProxyEditor({ proxy, onChange, onSave, onCancel }: { proxy: ProxyConfig
         <Field label="Host">
           <input value={proxy.host} disabled={proxy.scheme === "system"} placeholder={proxy.scheme === "system" ? "Uses Windows proxy settings" : ""} onChange={(e) => patch({ host: e.target.value })} />
         </Field>
-        <Field label="Port"><input type="number" value={proxy.port} disabled={proxy.scheme === "system"} onChange={(e) => patch({ port: Number(e.target.value) })} /></Field>
-        <Field label="Username"><input value={proxy.username ?? ""} onChange={(e) => patch({ username: e.target.value })} /></Field>
-        <Field label="Password"><input type="password" value={proxy.password ?? ""} onChange={(e) => patch({ password: e.target.value })} /></Field>
+        <Field label="Port">
+          <input type="number" value={proxy.port} disabled={proxy.scheme === "system"} onChange={(e) => patch({ port: Number(e.target.value) })} />
+        </Field>
+        <Field label="Username">
+          <input value={proxy.username ?? ""} disabled={proxy.scheme === "system"} onChange={(e) => patch({ username: e.target.value })} />
+        </Field>
+        <Field label="Password">
+          <input type="password" value={proxy.password ?? ""} disabled={proxy.scheme === "system"} onChange={(e) => patch({ password: e.target.value })} />
+        </Field>
 
         <footer>
           <button type="button" onClick={onCancel}>Cancel</button>
-          <button type="button" className="primary" onClick={() => onSave(proxy)}><Save size={16} /> Save proxy</button>
+          <button type="button" className="primary" onClick={() => onSave(proxy)}><Save size={14} /> Save Proxy</button>
         </footer>
       </form>
     </div>
