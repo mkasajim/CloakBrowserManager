@@ -15,7 +15,7 @@ use std::{
     sync::Mutex,
     thread,
 };
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -384,10 +384,10 @@ fn launch_profile(
             .map_err(|error| format!("Failed to start Node runner: {error}"))?;
         let mut child = child;
         if let Some(stdout) = child.stdout.take() {
-            spawn_runner_log_reader(stdout, state.db_path.clone(), profile_id.clone(), false);
+            spawn_runner_log_reader(stdout, state.db_path.clone(), profile_id.clone(), false, app.clone());
         }
         if let Some(stderr) = child.stderr.take() {
-            spawn_runner_log_reader(stderr, state.db_path.clone(), profile_id.clone(), true);
+            spawn_runner_log_reader(stderr, state.db_path.clone(), profile_id.clone(), true, app.clone());
         }
         state
             .runner
@@ -440,6 +440,7 @@ fn spawn_runner_log_reader<R>(
     db_path: PathBuf,
     profile_id: String,
     is_error_stream: bool,
+    app: tauri::AppHandle,
 ) where
     R: Read + Send + 'static,
 {
@@ -456,6 +457,7 @@ fn spawn_runner_log_reader<R>(
                 at: Utc::now().to_rfc3339(),
             };
             let _ = record_event_to_db(&db_path, &event);
+            let _ = app.emit("runner-log", &event);
         }
     });
 }
@@ -531,6 +533,196 @@ fn open_profile_folder(profile_id: String, state: State<AppState>) -> Result<(),
     Command::new("explorer")
         .arg(dir)
         .spawn()
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn test_proxy(proxy: ProxyConfig, state: State<AppState>) -> Result<ProxyConfig, String> {
+    let mut next_proxy = proxy.clone();
+    let mut cmd = Command::new("curl");
+    hide_command_window(&mut cmd);
+    cmd.arg("-s")
+       .arg("--max-time")
+       .arg("5")
+       .arg("https://api.ipify.org");
+       
+    if proxy.scheme != "system" {
+        let proxy_url = format!("{}://{}:{}", proxy.scheme, proxy.host, proxy.port);
+        cmd.arg("--proxy").arg(&proxy_url);
+        if let (Some(u), Some(p)) = (&proxy.username, &proxy.password) {
+            if !u.is_empty() {
+                cmd.arg("--proxy-user").arg(format!("{}:{}", u, p));
+            }
+        }
+    }
+    
+    let start = std::time::Instant::now();
+    match cmd.output() {
+        Ok(output) => {
+            let latency = start.elapsed().as_millis();
+            if output.status.success() {
+                let exit_ip = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !exit_ip.is_empty() && exit_ip.len() < 45 {
+                    next_proxy.last_test_status = Some(format!("Success (IP: {}, Latency: {}ms)", exit_ip, latency));
+                } else {
+                    next_proxy.last_test_status = Some(format!("Failed (Invalid IP response, Latency: {}ms)", latency));
+                }
+            } else {
+                let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                let short_err = if err_msg.is_empty() { "Connection error".to_string() } else { err_msg };
+                next_proxy.last_test_status = Some(format!("Failed ({})", short_err));
+            }
+        }
+        Err(e) => {
+            next_proxy.last_test_status = Some(format!("Failed to execute curl: {}", e));
+        }
+    }
+    
+    next_proxy.last_test_at = Some(chrono::Utc::now().to_rfc3339());
+    let _ = save_proxy(next_proxy.clone(), state);
+    Ok(next_proxy)
+}
+
+#[tauri::command]
+fn clear_profile_data(
+    profile_id: String,
+    state: State<AppState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let is_running = state.runner.children.lock().unwrap().contains_key(&profile_id);
+    if is_running {
+        return Err("Cannot clear browser cache/cookies while the profile is running".to_string());
+    }
+    
+    let dir = state.profile_dir(&profile_id);
+    if dir.exists() {
+        for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let path = entry.path();
+            if path.is_dir() {
+                fs::remove_dir_all(path).map_err(|e| e.to_string())?;
+            } else {
+                fs::remove_file(path).map_err(|e| e.to_string())?;
+            }
+        }
+    }
+    
+    let event = LaunchEvent {
+        profile_id,
+        status: ProfileStatus::Stopped,
+        message: "Profile browser cache, cookies, and local data cleared.".to_string(),
+        cdp_url: None,
+        at: Utc::now().to_rfc3339(),
+    };
+    record_event(&state, &event)?;
+    let _ = app.emit("runner-log", &event);
+    Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SystemInfo {
+    db_path: String,
+    logs_path: String,
+    profiles_path: String,
+    runner_script_exists: bool,
+    bundled_node_exists: bool,
+    cached_chrome_exists: bool,
+    cached_chrome_path: Option<String>,
+}
+
+#[tauri::command]
+fn get_system_info(state: State<AppState>, app: tauri::AppHandle) -> Result<SystemInfo, String> {
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf));
+    let resource_dir = app.path().resource_dir().ok();
+    
+    let runner_root = find_existing_path(
+        [
+            exe_dir.as_ref().map(|path| path.join("runner")),
+            resource_dir.as_ref().map(|path| path.join("runner")),
+            Some(PathBuf::from("runner")),
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    
+    let runner_script = find_existing_path(
+        [
+            runner_root.as_ref().map(|path| path.join("dist").join("index.js")),
+            resource_dir.as_ref().map(|path| path.join("runner").join("dist").join("index.js")),
+            resource_dir.as_ref().map(|path| path.join("dist").join("index.js")),
+            Some(PathBuf::from("runner").join("dist").join("index.js")),
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    
+    let bundled_node = find_existing_path(
+        [
+            runner_root.as_ref().map(|path| path.join("bin").join("node.exe")),
+            resource_dir.as_ref().map(|path| path.join("runner").join("bin").join("node.exe")),
+            resource_dir.as_ref().map(|path| path.join("bin").join("node.exe")),
+        ]
+        .into_iter()
+        .flatten(),
+    );
+
+    let home_dir = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .map(PathBuf::from)
+        .ok();
+        
+    let cache_dir = std::env::var("CLOAKBROWSER_CACHE_DIR")
+        .map(PathBuf::from)
+        .ok()
+        .or_else(|| home_dir.map(|h| h.join(".cloakbrowser")));
+        
+    let mut cached_chrome_path = None;
+    let mut cached_chrome_exists = false;
+    
+    if let Some(ref cache_dir) = cache_dir {
+        if cache_dir.exists() {
+            if let Ok(entries) = fs::read_dir(cache_dir) {
+                let mut candidates = Vec::new();
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                        if name.starts_with("chromium-") {
+                            let chrome_exe = path.join("chrome.exe");
+                            if chrome_exe.exists() {
+                                candidates.push(chrome_exe);
+                            }
+                        }
+                    }
+                }
+                if !candidates.is_empty() {
+                    cached_chrome_path = Some(candidates[0].to_string_lossy().to_string());
+                    cached_chrome_exists = true;
+                }
+            }
+        }
+    }
+
+    Ok(SystemInfo {
+        db_path: state.db_path.to_string_lossy().to_string(),
+        logs_path: state.data_dir.join("logs").to_string_lossy().to_string(),
+        profiles_path: state.profiles_dir.to_string_lossy().to_string(),
+        runner_script_exists: runner_script.is_some(),
+        bundled_node_exists: bundled_node.is_some(),
+        cached_chrome_exists,
+        cached_chrome_path,
+    })
+}
+
+#[tauri::command]
+fn clear_launch_events(state: State<AppState>) -> Result<(), String> {
+    state
+        .conn()?
+        .execute("delete from launch_events", [])
         .map_err(|error| error.to_string())?;
     Ok(())
 }
@@ -666,7 +858,11 @@ fn main() {
             launch_profile,
             stop_profile,
             list_launch_events,
-            open_profile_folder
+            open_profile_folder,
+            test_proxy,
+            clear_profile_data,
+            get_system_info,
+            clear_launch_events
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

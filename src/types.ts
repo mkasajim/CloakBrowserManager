@@ -83,3 +83,13 @@ export const defaultSettings: ProfileSettings = {
   extensionPaths: [],
   extraArgs: [],
 };
+
+export interface SystemInfo {
+  dbPath: string;
+  logsPath: string;
+  profilesPath: string;
+  runnerScriptExists: boolean;
+  bundledNodeExists: boolean;
+  cachedChromeExists: boolean;
+  cachedChromePath?: string;
+}

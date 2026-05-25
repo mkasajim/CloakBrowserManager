@@ -20,12 +20,16 @@ import {
   User,
   Users
 } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
 import { useEffect, useMemo, useState } from "react";
 import {
+  clearLaunchEvents,
+  clearProfileData,
   createProfile,
   createProxy,
   deleteProfile,
   duplicateProfile,
+  getSystemInfo,
   launchProfile,
   listEvents,
   listProfiles,
@@ -34,8 +38,9 @@ import {
   saveProfile,
   saveProxy,
   stopProfile,
+  testProxy,
 } from "./api";
-import type { LaunchEvent, Profile, ProxyConfig } from "./types";
+import type { LaunchEvent, Profile, ProxyConfig, SystemInfo } from "./types";
 
 const splitList = (value: string) => value.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean);
 const joinList = (value: string[]) => value.join("\n");
@@ -97,6 +102,132 @@ export function App() {
   // Filter logs states
   const [severityFilter, setSeverityFilter] = useState("all");
   const [logProfileId, setLogProfileId] = useState("");
+
+  const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
+  const [loadingSystemInfo, setLoadingSystemInfo] = useState(false);
+  const [testingAll, setTestingAll] = useState(false);
+
+  // Real-time listener for logs
+  useEffect(() => {
+    let active = true;
+    const unlistenPromise = listen<LaunchEvent>("runner-log", (event) => {
+      if (!active) return;
+      setEvents((current) => {
+        const exists = current.some((e) => e.at === event.payload.at && e.profileId === event.payload.profileId && e.message === event.payload.message);
+        if (exists) return current;
+        return [event.payload, ...current].slice(0, 100);
+      });
+      void listProfiles().then(setProfiles);
+    });
+    return () => {
+      active = false;
+      unlistenPromise.then((unlisten) => unlisten());
+    };
+  }, []);
+
+  async function loadSystemInfo() {
+    setLoadingSystemInfo(true);
+    try {
+      const info = await getSystemInfo();
+      setSystemInfo(info);
+    } catch (err) {
+      console.error("Failed to load system info", err);
+    } finally {
+      setLoadingSystemInfo(false);
+    }
+  }
+
+  useEffect(() => {
+    if (activeView === "settings") {
+      void loadSystemInfo();
+    }
+  }, [activeView]);
+
+  async function testAll() {
+    if (testingAll) return;
+    setTestingAll(true);
+    try {
+      for (const p of proxies) {
+        await testProxy(p);
+      }
+      await refresh();
+      alert("All proxies tested successfully!");
+    } catch (err) {
+      alert(`Error testing proxies: ${err}`);
+    } finally {
+      setTestingAll(false);
+    }
+  }
+
+  async function clearData(profile: Profile) {
+    if (profile.status === "running") {
+      alert("Cannot clear cache while browser is running.");
+      return;
+    }
+    const ok = window.confirm(`Are you sure you want to clear cookies, history, and cache for "${profile.name}"?\nThis action cannot be undone.`);
+    if (!ok) return;
+    try {
+      await clearProfileData(profile.id);
+      alert("Profile browser data cleared successfully!");
+      await refresh();
+    } catch (err) {
+      alert(`Error clearing data: ${err}`);
+    }
+  }
+
+  async function handleClearLogs() {
+    const ok = window.confirm("Are you sure you want to clear all launch logs? This cannot be undone.");
+    if (!ok) return;
+    try {
+      await clearLaunchEvents();
+      alert("Logs cleared successfully!");
+      await refresh();
+    } catch (err) {
+      alert(`Failed to clear logs: ${err}`);
+    }
+  }
+
+  function exportProfiles() {
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(profiles, null, 2));
+    const downloadAnchor = document.createElement("a");
+    downloadAnchor.setAttribute("href", dataStr);
+    downloadAnchor.setAttribute("download", `cloakbrowser_profiles_${new Date().toISOString().slice(0,10)}.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+  }
+
+  function importProfiles(e: React.ChangeEvent<HTMLInputElement>) {
+    const fileReader = new FileReader();
+    if (!e.target.files || e.target.files.length === 0) return;
+    fileReader.readAsText(e.target.files[0], "UTF-8");
+    fileReader.onload = async (event) => {
+      try {
+        const parsed = JSON.parse(event.target?.result as string) as Profile[];
+        if (!Array.isArray(parsed)) throw new Error("File content is not a valid profiles array");
+        
+        let count = 0;
+        for (const item of parsed) {
+          if (!item.name || !item.settings) continue;
+          const nextProfile: Profile = {
+            ...item,
+            id: crypto.randomUUID(),
+            status: "stopped",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            lastLaunchedAt: undefined,
+            cdpUrl: undefined,
+          };
+          await saveProfile(nextProfile);
+          count++;
+        }
+        alert(`Successfully imported ${count} profiles!`);
+        await refresh();
+      } catch (err) {
+        alert(`Error importing profiles: ${err}`);
+      }
+    };
+  }
 
   async function refresh() {
     const [nextProfiles, nextProxies, nextEvents] = await Promise.all([listProfiles(), listProxies(), listEvents()]);
@@ -258,7 +389,14 @@ export function App() {
                     <span className="status-text">{profiles.filter((p) => p.status === "running").length} Active Connections</span>
                   </div>
                 </div>
-                <div className="workspace-actions-buttons">
+                <div className="workspace-actions-buttons" style={{ display: "flex", gap: 8 }}>
+                  <button type="button" onClick={exportProfiles} title="Export all profiles as JSON">
+                    Export All
+                  </button>
+                  <label className="btn-label" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", border: "1px solid var(--border-zinc)", borderRadius: "var(--radius-md)", padding: "0 12px", height: "36px", fontSize: "14px", backgroundColor: "var(--bg-zinc)", color: "var(--text-primary)" }}>
+                    Import JSON
+                    <input type="file" accept=".json" onChange={importProfiles} style={{ display: "none" }} />
+                  </label>
                   <button type="button" className="primary" onClick={addProfile}>
                     <Plus size={15} /> New Profile
                   </button>
@@ -356,6 +494,7 @@ export function App() {
                   await refresh();
                 }
               }}
+              onClearData={() => selected && clearData(selected)}
             />
           </div>
         ) : null}
@@ -368,8 +507,8 @@ export function App() {
                   <button type="button" className="primary" onClick={async () => setProxyDraft(await createProxy())}>
                     <Plus size={15} /> Add Proxy
                   </button>
-                  <button type="button">
-                    Test All
+                  <button type="button" disabled={testingAll} onClick={testAll}>
+                    {testingAll ? "Testing All..." : "Test All"}
                   </button>
                 </div>
                 <div className="proxy-toolbar-right">
@@ -511,14 +650,74 @@ export function App() {
 
         {activeView === "settings" ? (
           <div className="workspace">
-            <div className="settings-workspace">
-              <div className="settings-card">
-                <h3>Application Configuration</h3>
-                <small>Operational configuration preferences for CloakBrowser.</small>
-                <div className="settings-pills-row">
-                  <span className="pill">Auto-refresh active profiles (1500ms)</span>
-                  <span className="pill">Local state persistence</span>
-                  <span className="pill">Tauri sidecar lifecycle reconciliation</span>
+            <div className="settings-workspace" style={{ display: "flex", flexDirection: "column", gap: 20, width: "100%", padding: 20, overflowY: "auto" }}>
+              <div className="settings-card" style={{ border: "1px solid var(--border-zinc)", borderRadius: "var(--radius-lg)", padding: 24, backgroundColor: "var(--bg-zinc)", boxShadow: "0 4px 20px rgba(0, 0, 0, 0.3)" }}>
+                <h3 style={{ display: "flex", alignItems: "center", gap: 8, margin: 0, fontSize: 18, color: "var(--primary)" }}><Settings size={18} /> System Environment</h3>
+                <small style={{ color: "var(--text-muted)", display: "block", marginTop: 4, marginBottom: 16 }}>Operational folder locations for the CloakBrowser Manager.</small>
+                {loadingSystemInfo ? (
+                  <p style={{ color: "var(--text-secondary)" }}>Loading environment info...</p>
+                ) : systemInfo ? (
+                  <dl style={{ display: "grid", gridTemplateColumns: "150px 1fr", gap: "10px 16px", margin: 0, fontSize: 13 }}>
+                    <dt style={{ color: "var(--text-muted)", fontWeight: "bold" }}>Database Path</dt>
+                    <dd style={{ color: "var(--text-primary)", wordBreak: "break-all", margin: 0, fontFamily: "var(--font-code)" }}>{systemInfo.dbPath}</dd>
+                    
+                    <dt style={{ color: "var(--text-muted)", fontWeight: "bold" }}>Logs Path</dt>
+                    <dd style={{ color: "var(--text-primary)", wordBreak: "break-all", margin: 0, fontFamily: "var(--font-code)" }}>{systemInfo.logsPath}</dd>
+                    
+                    <dt style={{ color: "var(--text-muted)", fontWeight: "bold" }}>Profiles Path</dt>
+                    <dd style={{ color: "var(--text-primary)", wordBreak: "break-all", margin: 0, fontFamily: "var(--font-code)" }}>{systemInfo.profilesPath}</dd>
+                  </dl>
+                ) : (
+                  <p style={{ color: "var(--error)" }}>Could not load system info</p>
+                )}
+              </div>
+
+              <div className="settings-card" style={{ border: "1px solid var(--border-zinc)", borderRadius: "var(--radius-lg)", padding: 24, backgroundColor: "var(--bg-zinc)", boxShadow: "0 4px 20px rgba(0, 0, 0, 0.3)" }}>
+                <h3 style={{ display: "flex", alignItems: "center", gap: 8, margin: 0, fontSize: 18, color: "var(--primary)" }}><Cpu size={18} /> Runner Sidecar & Browser Health</h3>
+                <small style={{ color: "var(--text-muted)", display: "block", marginTop: 4, marginBottom: 16 }}>Status of executable sidecars and browsers required for launching profiles.</small>
+                {loadingSystemInfo ? (
+                  <p style={{ color: "var(--text-secondary)" }}>Checking health status...</p>
+                ) : systemInfo ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 12, fontSize: 13 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyItems: "center", gap: 8 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: "50%", backgroundColor: systemInfo.runnerScriptExists ? "var(--success)" : "var(--error)" }}></span>
+                      <strong style={{ minWidth: 150 }}>TypeScript Runner:</strong>
+                      <span style={{ color: systemInfo.runnerScriptExists ? "var(--text-primary)" : "var(--error)" }}>
+                        {systemInfo.runnerScriptExists ? "Available (dist/index.js)" : "Missing runner build! Run npm run runner:build first."}
+                      </span>
+                    </div>
+
+                    <div style={{ display: "flex", alignItems: "center", justifyItems: "center", gap: 8 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: "50%", backgroundColor: systemInfo.bundledNodeExists ? "var(--success)" : "var(--warn)" }}></span>
+                      <strong style={{ minWidth: 150 }}>Bundled Node.exe:</strong>
+                      <span>
+                        {systemInfo.bundledNodeExists ? "Bundled (runner/bin/node.exe)" : "Not Bundled (using system fallback Node)"}
+                      </span>
+                    </div>
+
+                    <div style={{ display: "flex", alignItems: "center", justifyItems: "center", gap: 8 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: "50%", backgroundColor: systemInfo.cachedChromeExists ? "var(--success)" : "var(--error)" }}></span>
+                      <strong style={{ minWidth: 150 }}>CloakBrowser Binary:</strong>
+                      <span style={{ color: systemInfo.cachedChromeExists ? "var(--text-primary)" : "var(--error)" }}>
+                        {systemInfo.cachedChromeExists ? `Detected: ${systemInfo.cachedChromePath?.split('\\').pop()}` : "No cached CloakBrowser found under .cloakbrowser! Launches will fail."}
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <p style={{ color: "var(--error)" }}>Health checks unavailable</p>
+                )}
+              </div>
+
+              <div className="settings-card" style={{ border: "1px solid var(--border-zinc)", borderRadius: "var(--radius-lg)", padding: 24, backgroundColor: "var(--bg-zinc)", boxShadow: "0 4px 20px rgba(0, 0, 0, 0.3)" }}>
+                <h3 style={{ display: "flex", alignItems: "center", gap: 8, margin: 0, fontSize: 18, color: "var(--primary)" }}><Terminal size={18} /> System Maintenance</h3>
+                <small style={{ color: "var(--text-muted)", display: "block", marginTop: 4, marginBottom: 16 }}>Purge and reset manager database states.</small>
+                <div style={{ display: "flex", gap: 12 }}>
+                  <button type="button" onClick={handleClearLogs} style={{ border: "1px solid var(--error)", color: "var(--error)", backgroundColor: "rgba(255, 180, 171, 0.05)", padding: "10px 16px", borderRadius: "var(--radius-md)", cursor: "pointer", fontSize: 13 }}>
+                    Purge Activity Logs
+                  </button>
+                  <button type="button" className="secondary" onClick={() => void refresh()} style={{ fontSize: 13 }}>
+                    Refresh Database Stats
+                  </button>
                 </div>
               </div>
             </div>
@@ -526,18 +725,28 @@ export function App() {
             <aside className="inspector">
               <div className="inspector-head">
                 <div>
-                  <h2>Quick Shortcuts</h2>
+                  <h2>Manager Stats</h2>
                   <span className="muted" style={{ fontSize: 13, marginTop: 4, display: "block" }}>
-                    Operational helper tools for managing the desktop manager.
+                    Quick summary of active and configured profiles.
                   </span>
                 </div>
               </div>
+              <dl style={{ marginTop: 10 }}>
+                <dt>Total Profiles</dt>
+                <dd>{profiles.length}</dd>
+                <dt>Running Profiles</dt>
+                <dd style={{ color: "var(--primary)", fontWeight: "bold" }}>{profiles.filter((p) => p.status === "running").length}</dd>
+                <dt>Total Proxies</dt>
+                <dd>{proxies.length}</dd>
+                <dt>Logged Events</dt>
+                <dd>{events.length}</dd>
+              </dl>
               <div className="inspector-buttons" style={{ marginTop: "auto" }}>
                 <button type="button" className="primary" onClick={addProfile}>
                   <Plus size={15} /> New profile
                 </button>
-                <button type="button" onClick={() => void refresh()}>
-                  <RefreshCw size={14} /> Refresh Data
+                <button type="button" onClick={() => { void refresh(); void loadSystemInfo(); }}>
+                  <RefreshCw size={14} /> Force Refresh
                 </button>
               </div>
             </aside>
@@ -579,6 +788,7 @@ function ProfileInspector({
   onLaunch,
   onStop,
   onDuplicate,
+  onClearData,
 }: {
   profile?: Profile;
   proxy?: ProxyConfig;
@@ -587,6 +797,7 @@ function ProfileInspector({
   onLaunch: () => void;
   onStop: () => void;
   onDuplicate: () => void;
+  onClearData: () => void;
 }) {
   if (!profile) return <aside className="inspector empty-inspector">Select or create a profile to get started.</aside>;
   return (
@@ -634,12 +845,15 @@ function ProfileInspector({
 
       {profile.notes ? <p className="notes">{profile.notes}</p> : null}
 
-      <div className="inspector-buttons">
-        <button type="button" className="primary" onClick={() => openProfileFolder(profile.id)}>
+      <div className="inspector-buttons" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        <button type="button" className="primary" onClick={() => openProfileFolder(profile.id)} style={{ flex: "1 1 45%" }}>
           <FolderOpen size={14} /> Data folder
         </button>
-        <button type="button" disabled={!profile.cdpUrl} onClick={() => profile.cdpUrl && navigator.clipboard.writeText(profile.cdpUrl)}>
+        <button type="button" disabled={!profile.cdpUrl} onClick={() => profile.cdpUrl && navigator.clipboard.writeText(profile.cdpUrl)} style={{ flex: "1 1 45%" }}>
           <ExternalLink size={14} /> Copy CDP
+        </button>
+        <button type="button" disabled={profile.status === "running"} onClick={onClearData} style={{ flex: "1 1 100%", border: "1px solid var(--error)", color: "var(--error)", backgroundColor: "rgba(255, 180, 171, 0.05)", marginTop: 4 }}>
+          <RefreshCw size={14} /> Clear Cache
         </button>
       </div>
     </aside>
@@ -862,6 +1076,23 @@ function ProxyEditor({
   onSave: (proxy: ProxyConfig) => void;
   onCancel: () => void;
 }) {
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<string | null>(proxy.lastTestStatus || null);
+
+  const handleTest = async () => {
+    setTesting(true);
+    setTestResult("Testing connection...");
+    try {
+      const res = await testProxy(proxy);
+      setTestResult(res.lastTestStatus || "No status returned");
+      onChange(res);
+    } catch (err) {
+      setTestResult(`Test failed: ${err}`);
+    } finally {
+      setTesting(false);
+    }
+  };
+
   const patch = (partial: Partial<ProxyConfig>) => onChange({ ...proxy, ...partial });
   return (
     <div className="modal-backdrop">
@@ -870,32 +1101,43 @@ function ProxyEditor({
           <h2>Edit Proxy: {proxy.name || "New proxy"}</h2>
         </header>
 
-        <Field label="Name">
-          <input value={proxy.name} onChange={(e) => patch({ name: e.target.value })} />
-        </Field>
-        <Field label="Scheme">
-          <select value={proxy.scheme} onChange={(e) => patch({ scheme: e.target.value as ProxyConfig["scheme"] })}>
-            <option value="http">HTTP</option>
-            <option value="https">HTTPS</option>
-            <option value="socks5">SOCKS5</option>
-            <option value="system">System proxy</option>
-          </select>
-        </Field>
-        <Field label="Host">
-          <input value={proxy.host} disabled={proxy.scheme === "system"} placeholder={proxy.scheme === "system" ? "Uses Windows proxy settings" : ""} onChange={(e) => patch({ host: e.target.value })} />
-        </Field>
-        <Field label="Port">
-          <input type="number" value={proxy.port} disabled={proxy.scheme === "system"} onChange={(e) => patch({ port: Number(e.target.value) })} />
-        </Field>
-        <Field label="Username">
-          <input value={proxy.username ?? ""} disabled={proxy.scheme === "system"} onChange={(e) => patch({ username: e.target.value })} />
-        </Field>
-        <Field label="Password">
-          <input type="password" value={proxy.password ?? ""} disabled={proxy.scheme === "system"} onChange={(e) => patch({ password: e.target.value })} />
-        </Field>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: "0 4px", overflowY: "auto", maxHeight: "60vh" }}>
+          <Field label="Name">
+            <input value={proxy.name} onChange={(e) => patch({ name: e.target.value })} />
+          </Field>
+          <Field label="Scheme">
+            <select value={proxy.scheme} onChange={(e) => patch({ scheme: e.target.value as ProxyConfig["scheme"] })}>
+              <option value="http">HTTP</option>
+              <option value="https">HTTPS</option>
+              <option value="socks5">SOCKS5</option>
+              <option value="system">System proxy</option>
+            </select>
+          </Field>
+          <Field label="Host">
+            <input value={proxy.host} disabled={proxy.scheme === "system"} placeholder={proxy.scheme === "system" ? "Uses Windows proxy settings" : ""} onChange={(e) => patch({ host: e.target.value })} />
+          </Field>
+          <Field label="Port">
+            <input type="number" value={proxy.port} disabled={proxy.scheme === "system"} onChange={(e) => patch({ port: Number(e.target.value) })} />
+          </Field>
+          <Field label="Username">
+            <input value={proxy.username ?? ""} disabled={proxy.scheme === "system"} onChange={(e) => patch({ username: e.target.value })} />
+          </Field>
+          <Field label="Password">
+            <input type="password" value={proxy.password ?? ""} disabled={proxy.scheme === "system"} onChange={(e) => patch({ password: e.target.value })} />
+          </Field>
+          
+          {testResult && (
+            <div style={{ fontSize: 13, color: testResult.includes("Success") ? "var(--success)" : "var(--error)", marginTop: 8, padding: 8, borderRadius: 4, border: "1px solid var(--border-zinc)", backgroundColor: "rgba(0,0,0,0.2)" }}>
+              <strong>Result:</strong> {testResult}
+            </div>
+          )}
+        </div>
 
         <footer>
           <button type="button" onClick={onCancel}>Cancel</button>
+          <button type="button" disabled={testing || proxy.scheme === "system"} onClick={handleTest}>
+            {testing ? "Testing..." : "Test Connection"}
+          </button>
           <button type="button" className="primary" onClick={() => onSave(proxy)}><Save size={14} /> Save Proxy</button>
         </footer>
       </form>

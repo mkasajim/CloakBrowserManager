@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { defaultSettings, type LaunchEvent, type Profile, type ProxyConfig } from "./types";
+import { defaultSettings, type LaunchEvent, type Profile, type ProxyConfig, type SystemInfo } from "./types";
 
 const profilesKey = "cloak-local-manager.profiles";
 const proxiesKey = "cloak-local-manager.proxies";
@@ -135,4 +135,49 @@ export async function listEvents(): Promise<LaunchEvent[]> {
 export async function openProfileFolder(profileId: string): Promise<void> {
   if (isTauri()) return invoke("open_profile_folder", { profileId });
   console.info("Open profile folder is only available in the desktop app.", profileId);
+}
+
+export async function testProxy(proxy: ProxyConfig): Promise<ProxyConfig> {
+  if (isTauri()) return invoke("test_proxy", { proxy });
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  const next = {
+    ...proxy,
+    lastTestStatus: `Success (IP: ${proxy.host || "192.168.1.1"}, Latency: ${Math.floor(Math.random() * 120) + 40}ms)`,
+    lastTestAt: now(),
+  };
+  const proxies = read<ProxyConfig[]>(proxiesKey, []);
+  const idx = proxies.findIndex((p) => p.id === proxy.id);
+  if (idx >= 0) proxies[idx] = next;
+  write(proxiesKey, proxies);
+  return next;
+}
+
+export async function clearProfileData(profileId: string): Promise<void> {
+  if (isTauri()) return invoke("clear_profile_data", { profileId });
+  
+  const event: LaunchEvent = {
+    profileId,
+    status: "stopped",
+    message: "Mock profile browser cache, cookies, and local data cleared.",
+    at: now(),
+  };
+  write(eventsKey, [event, ...read<LaunchEvent[]>(eventsKey, [])].slice(0, 100));
+}
+
+export async function getSystemInfo(): Promise<SystemInfo> {
+  if (isTauri()) return invoke("get_system_info");
+  return {
+    dbPath: "C:\\Users\\MockUser\\AppData\\Local\\CloakBrowser\\CloakBrowserLocalManager\\manager.db",
+    logsPath: "C:\\Users\\MockUser\\AppData\\Local\\CloakBrowser\\CloakBrowserLocalManager\\logs",
+    profilesPath: "C:\\Users\\MockUser\\AppData\\Local\\CloakBrowser\\CloakBrowserLocalManager\\profiles",
+    runnerScriptExists: true,
+    bundledNodeExists: false,
+    cachedChromeExists: true,
+    cachedChromePath: "C:\\Users\\MockUser\\.cloakbrowser\\chromium-115.0.0\\chrome.exe",
+  };
+}
+
+export async function clearLaunchEvents(): Promise<void> {
+  if (isTauri()) return invoke("clear_launch_events");
+  write(eventsKey, []);
 }
