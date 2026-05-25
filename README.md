@@ -1,4 +1,4 @@
-# CloakBrowser Local Manager
+# CyberCloak
 
 Windows-first local desktop manager for CloakBrowser profiles.
 

@@ -2,15 +2,15 @@
 name = "cloakbrowser-local-manager"
 version = "0.1.0"
 description = "Local Windows profile manager for CloakBrowser"
-authors = ["CloakBrowser Local Manager"]
+authors = ["CyberCloak"]
 edition = "2021"
 
 [package.metadata.tauri-winres]
-FileDescription = "CloakBrowser Local Manager"
-ProductName = "CloakBrowser Local Manager"
+FileDescription = "CyberCloak"
+ProductName = "CyberCloak"
 ProductVersion = "0.1.0"
-OriginalFilename = "cloakbrowser-local-manager.exe"
-LegalCopyright = "Copyright (c) 2026 CloakBrowser Local Manager"
+OriginalFilename = "cybercloak.exe"
+LegalCopyright = "Copyright (c) 2026 CyberCloak"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

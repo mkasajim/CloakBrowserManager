@@ -1,4 +1,4 @@
-# CloakBrowser Local Manager Plan
+# CyberCloak Plan
 
 ## Decision
 
