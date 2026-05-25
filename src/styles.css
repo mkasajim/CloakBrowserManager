@@ -1343,6 +1343,95 @@ button.primary:hover {
   gap: var(--stack-sm);
 }
 
+/* Dialog Specific Styles */
+.modal.dialog-modal {
+  width: 440px;
+  padding: 24px;
+  gap: 20px;
+  border: 1px solid var(--border-zinc);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  position: relative;
+  max-width: 90vw;
+}
+
+.modal.dialog-modal.info {
+  border-color: rgba(0, 240, 255, 0.3);
+  box-shadow: 0 0 30px rgba(0, 240, 255, 0.05), 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+}
+
+.modal.dialog-modal.warn {
+  border-color: rgba(251, 191, 36, 0.3);
+  box-shadow: 0 0 30px rgba(251, 191, 36, 0.05), 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+}
+
+.modal.dialog-modal.error {
+  border-color: rgba(255, 180, 171, 0.3);
+  box-shadow: 0 0 30px rgba(255, 180, 171, 0.05), 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+}
+
+.dialog-content {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.dialog-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dialog-icon.info {
+  background-color: rgba(0, 240, 255, 0.1);
+  color: var(--primary);
+}
+
+.dialog-icon.warn {
+  background-color: rgba(251, 191, 36, 0.1);
+  color: var(--warn);
+}
+
+.dialog-icon.error {
+  background-color: rgba(255, 180, 171, 0.1);
+  color: var(--error);
+}
+
+.dialog-text {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+}
+
+.dialog-title {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dialog-message {
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.dialog-footer button {
+  min-width: 80px;
+}
+
 /* Wide profile editor modal matching split-screen detail view */
 .modal.wide {
   width: min(1080px, 95vw);

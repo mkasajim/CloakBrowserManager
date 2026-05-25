@@ -18,7 +18,10 @@ import {
   Terminal,
   Trash2,
   User,
-  Users
+  Users,
+  AlertTriangle,
+  CheckCircle2,
+  HelpCircle
 } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useMemo, useState } from "react";
@@ -107,6 +110,39 @@ export function App() {
   const [loadingSystemInfo, setLoadingSystemInfo] = useState(false);
   const [testingAll, setTestingAll] = useState(false);
 
+  // Dialog state for custom native-like alerts/confirms
+  const [dialog, setDialog] = useState<{
+    type: "alert" | "confirm";
+    severity: "info" | "warn" | "error";
+    title: string;
+    message: string;
+    resolve: (value: boolean) => void;
+  } | null>(null);
+
+  const showAlert = (message: string, title = "Notification", severity: "info" | "warn" | "error" = "info"): Promise<boolean> => {
+    return new Promise((resolve) => {
+      setDialog({
+        type: "alert",
+        severity,
+        title,
+        message,
+        resolve,
+      });
+    });
+  };
+
+  const showConfirm = (message: string, title = "Confirmation Required", severity: "info" | "warn" | "error" = "warn"): Promise<boolean> => {
+    return new Promise((resolve) => {
+      setDialog({
+        type: "confirm",
+        severity,
+        title,
+        message,
+        resolve,
+      });
+    });
+  };
+
   // Real-time listener for logs
   useEffect(() => {
     let active = true;
@@ -151,9 +187,9 @@ export function App() {
         await testProxy(p);
       }
       await refresh();
-      alert("All proxies tested successfully!");
+      await showAlert("All proxies tested successfully!", "Proxies Tested", "info");
     } catch (err) {
-      alert(`Error testing proxies: ${err}`);
+      await showAlert(`Error testing proxies: ${err}`, "Proxy Test Error", "error");
     } finally {
       setTestingAll(false);
     }
@@ -161,29 +197,29 @@ export function App() {
 
   async function clearData(profile: Profile) {
     if (profile.status === "running") {
-      alert("Cannot clear cache while browser is running.");
+      await showAlert("Cannot clear cache while browser is running.", "Cache Clear Warning", "warn");
       return;
     }
-    const ok = window.confirm(`Are you sure you want to clear cookies, history, and cache for "${profile.name}"?\nThis action cannot be undone.`);
+    const ok = await showConfirm(`Are you sure you want to clear cookies, history, and cache for "${profile.name}"?\nThis action cannot be undone.`, "Clear Profile Data", "warn");
     if (!ok) return;
     try {
       await clearProfileData(profile.id);
-      alert("Profile browser data cleared successfully!");
+      await showAlert("Profile browser data cleared successfully!", "Data Cleared", "info");
       await refresh();
     } catch (err) {
-      alert(`Error clearing data: ${err}`);
+      await showAlert(`Error clearing data: ${err}`, "Error", "error");
     }
   }
 
   async function handleClearLogs() {
-    const ok = window.confirm("Are you sure you want to clear all launch logs? This cannot be undone.");
+    const ok = await showConfirm("Are you sure you want to clear all launch logs? This cannot be undone.", "Clear Logs", "warn");
     if (!ok) return;
     try {
       await clearLaunchEvents();
-      alert("Logs cleared successfully!");
+      await showAlert("Logs cleared successfully!", "Logs Cleared", "info");
       await refresh();
     } catch (err) {
-      alert(`Failed to clear logs: ${err}`);
+      await showAlert(`Failed to clear logs: ${err}`, "Error", "error");
     }
   }
 
@@ -236,10 +272,10 @@ export function App() {
           await saveProfile(nextProfile);
           count++;
         }
-        alert(`Successfully imported ${count} profiles!`);
+        await showAlert(`Successfully imported ${count} profiles!`, "Import Successful", "info");
         await refresh();
       } catch (err) {
-        alert(`Error importing profiles: ${err}`);
+        await showAlert(`Error importing profiles: ${err}`, "Import Error", "error");
       }
     };
   }
@@ -294,7 +330,7 @@ export function App() {
   }
 
   async function removeProfile(profile: Profile) {
-    const removeData = window.confirm(`Delete browser data for "${profile.name}" too?`);
+    const removeData = await showConfirm(`Delete browser data for "${profile.name}" too?`, "Delete Profile Data", "warn");
     await deleteProfile(profile.id, removeData);
     await refresh();
   }
@@ -790,6 +826,44 @@ export function App() {
             await refresh();
           }}
         />
+      ) : null}
+
+      {dialog ? (
+        <div className="modal-backdrop">
+          <div className={`modal dialog-modal ${dialog.severity}`}>
+            <div className="dialog-content">
+              <div className={`dialog-icon ${dialog.severity}`}>
+                {dialog.severity === "error" && <AlertTriangle size={24} />}
+                {dialog.severity === "warn" && <AlertTriangle size={24} />}
+                {dialog.severity === "info" && (dialog.type === "confirm" ? <HelpCircle size={24} /> : <CheckCircle2 size={24} />)}
+              </div>
+              <div className="dialog-text">
+                <div className="dialog-title">{dialog.title}</div>
+                <div className="dialog-message">{dialog.message}</div>
+              </div>
+            </div>
+            <div className="dialog-footer">
+              {dialog.type === "confirm" && (
+                <button type="button" onClick={() => {
+                  dialog.resolve(false);
+                  setDialog(null);
+                }}>
+                  Cancel
+                </button>
+              )}
+              <button
+                type="button"
+                className="primary"
+                onClick={() => {
+                  dialog.resolve(true);
+                  setDialog(null);
+                }}
+              >
+                {dialog.type === "confirm" ? "Confirm" : "OK"}
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
     </main>
   );
