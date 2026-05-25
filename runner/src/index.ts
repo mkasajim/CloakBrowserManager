@@ -207,7 +207,7 @@ function parseSystemProxyValue(value: string, bypass?: string) {
   return undefined;
 }
 
-function buildArgs(settings: ProfileSettings, proxy?: ProxyConfig | null) {
+function buildArgs(settings: ProfileSettings, proxy?: ProxyConfig | null, disableProxy = false) {
   const args = [...settings.extraArgs];
   if (settings.fingerprintSeed) args.push(`--fingerprint=${settings.fingerprintSeed}`);
   if (settings.platform !== "auto") args.push(`--fingerprint-platform=${settings.platform}`);
@@ -219,7 +219,7 @@ function buildArgs(settings: ProfileSettings, proxy?: ProxyConfig | null) {
     args.push(`--fingerprint-webrtc-ip=${settings.webrtcIp}`);
   }
   if (settings.webrtcMode === "disabled") args.push("--disable-webrtc");
-  if (!proxy) args.push("--no-proxy-server");
+  if (disableProxy && !proxy) args.push("--no-proxy-server");
   return args;
 }
 
@@ -380,10 +380,11 @@ async function launch(payloadPath: string) {
   const resolvedSystemProxy = selectedSystemProxy ? await resolveSystemProxyFromWindows() : undefined;
   const explicitProxy =
     selectedSystemProxy ? resolvedSystemProxy : payload.proxy && payload.proxy.scheme !== "system" ? payload.proxy : undefined;
-  const directConnection = !explicitProxy && !selectedSystemProxy && !payload.proxy;
+  const directConnection = !payload.proxy;
+  const currentNetworkFallback = selectedSystemProxy && !explicitProxy;
   let resolvedTimezone = useGeoIpDetection ? undefined : settings.timezone || undefined;
   let resolvedLocale = useGeoIpDetection ? undefined : settings.locale || undefined;
-  let launchArgs = buildArgs(settings, explicitProxy);
+  let launchArgs = buildArgs(settings, explicitProxy, directConnection);
 
   if (useGeoIpDetection && directConnection) {
     const [geo, exitIp] = await Promise.all([resolveDirectGeo(), resolveDirectExitIp()]);
@@ -394,12 +395,20 @@ async function launch(payloadPath: string) {
     }
   }
 
-  if (useGeoIpDetection && selectedSystemProxy && !explicitProxy) {
-    console.warn("[runner] System proxy selected but no explicit Windows proxy server could be resolved; falling back without geoip proxy resolution.");
+  if (useGeoIpDetection && currentNetworkFallback) {
+    const [geo, exitIp] = await Promise.all([resolveDirectGeo(), resolveDirectExitIp()]);
+    resolvedTimezone = geo.timezone;
+    resolvedLocale = geo.locale;
+    if (exitIp && settings.webrtcMode === "auto" && !launchArgs.some((arg) => arg.startsWith("--fingerprint-webrtc-ip="))) {
+      launchArgs = [...launchArgs, `--fingerprint-webrtc-ip=${exitIp}`];
+    }
+    console.warn(
+      "[runner] System proxy selected but no explicit Windows proxy server could be resolved; using current network path geo resolution instead.",
+    );
   }
 
   console.log(
-    `[runner] Launch network path=${directConnection ? "direct" : selectedSystemProxy ? "system-proxy" : "saved-proxy"} ` +
+    `[runner] Launch network path=${directConnection ? "direct" : currentNetworkFallback ? "system-network" : selectedSystemProxy ? "system-proxy" : "saved-proxy"} ` +
       `resolvedProxy=${proxyUrl(explicitProxy) ?? "none"} ` +
       `resolvedTimezone=${resolvedTimezone ?? "unset"} resolvedLocale=${resolvedLocale ?? "unset"}`,
   );
