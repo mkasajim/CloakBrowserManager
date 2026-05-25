@@ -197,6 +197,21 @@ export function App() {
     downloadAnchor.remove();
   }
 
+  function exportLogs() {
+    const logLines = filteredEvents.map((e) => {
+      const time = new Date(e.at).toISOString().replace("T", " ").slice(0, 19);
+      return `[${time}] [${e.status.toUpperCase()}] [Profile: ${e.profileId.slice(0, 8)}] - ${e.message}`;
+    }).join("\n");
+    
+    const dataStr = "data:text/plain;charset=utf-8," + encodeURIComponent(logLines);
+    const downloadAnchor = document.createElement("a");
+    downloadAnchor.setAttribute("href", dataStr);
+    downloadAnchor.setAttribute("download", `cloakbrowser_logs_${new Date().toISOString().slice(0,10)}.txt`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+  }
+
   function importProfiles(e: React.ChangeEvent<HTMLInputElement>) {
     const fileReader = new FileReader();
     if (!e.target.files || e.target.files.length === 0) return;
@@ -607,8 +622,8 @@ export function App() {
                 </div>
               </div>
               <div className="logs-filter-actions">
-                <button type="button" onClick={() => void refresh()}>EXPORT</button>
-                <button type="button">CLEAR</button>
+                <button type="button" onClick={exportLogs}>EXPORT</button>
+                <button type="button" onClick={handleClearLogs}>CLEAR</button>
               </div>
             </div>
 
