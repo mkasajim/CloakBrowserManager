@@ -49,7 +49,13 @@ interface ProxyConfig {
   bypass?: string;
 }
 
+interface GeoResult {
+  timezone?: string;
+  locale?: string;
+}
+
 const IP_ECHO_URLS = ["https://api.ipify.org", "https://checkip.amazonaws.com", "https://ifconfig.me/ip"];
+const GEOIP_URLS = ["https://ipapi.co/json/", "https://ipwho.is/", "https://get.geojs.io/v1/ip/geo.json"];
 
 const COUNTRY_LOCALE_MAP: Record<string, string> = {
   US: "en-US",
@@ -338,36 +344,48 @@ async function resolveSystemProxyExitIp() {
   return undefined;
 }
 
-async function resolveDirectGeo() {
-  const body = await requestText("https://ipapi.co/json/");
-  if (!body) return {};
+function parseGeoBody(body: string): GeoResult {
+  const data = JSON.parse(body) as {
+    timezone?: string | { id?: string };
+    time_zone?: string;
+    country_code?: string;
+    countryCode?: string;
+    country?: { iso_code?: string };
+    success?: boolean;
+  };
+  if (data.success === false) return {};
 
-  try {
-    const data = JSON.parse(body) as { timezone?: string; country_code?: string };
-    const countryCode = data.country_code?.toUpperCase();
-    return {
-      timezone: data.timezone || undefined,
-      locale: countryCode ? COUNTRY_LOCALE_MAP[countryCode] : undefined,
-    };
-  } catch {
-    return {};
+  const timezone =
+    typeof data.timezone === "string" ? data.timezone : data.timezone?.id || data.time_zone || undefined;
+  const countryCode = (data.country_code || data.countryCode || data.country?.iso_code)?.toUpperCase();
+  return {
+    timezone,
+    locale: countryCode ? COUNTRY_LOCALE_MAP[countryCode] : undefined,
+  };
+}
+
+async function resolveGeo(requester: (url: string) => Promise<string | null>): Promise<GeoResult> {
+  for (const url of GEOIP_URLS) {
+    const body = await requester(url);
+    if (!body) continue;
+
+    try {
+      const geo = parseGeoBody(body);
+      if (geo.timezone || geo.locale) return geo;
+    } catch {
+      continue;
+    }
   }
+
+  return {};
+}
+
+async function resolveDirectGeo() {
+  return resolveGeo(requestText);
 }
 
 async function resolveSystemProxyGeo() {
-  const body = await requestTextViaSystemProxy("https://ipapi.co/json/");
-  if (!body) return {};
-
-  try {
-    const data = JSON.parse(body) as { timezone?: string; country_code?: string };
-    const countryCode = data.country_code?.toUpperCase();
-    return {
-      timezone: data.timezone || undefined,
-      locale: countryCode ? COUNTRY_LOCALE_MAP[countryCode] : undefined,
-    };
-  } catch {
-    return {};
-  }
+  return resolveGeo(requestTextViaSystemProxy);
 }
 
 async function launch(payloadPath: string) {
@@ -384,21 +402,24 @@ async function launch(payloadPath: string) {
   const currentNetworkFallback = selectedSystemProxy && !explicitProxy;
   let resolvedTimezone = useGeoIpDetection ? undefined : settings.timezone || undefined;
   let resolvedLocale = useGeoIpDetection ? undefined : settings.locale || undefined;
+  let resolvedExitIp: string | undefined;
   let launchArgs = buildArgs(settings, explicitProxy, directConnection);
 
   if (useGeoIpDetection && directConnection) {
     const [geo, exitIp] = await Promise.all([resolveDirectGeo(), resolveDirectExitIp()]);
     resolvedTimezone = geo.timezone;
     resolvedLocale = geo.locale;
+    resolvedExitIp = exitIp;
     if (exitIp && settings.webrtcMode === "auto" && !launchArgs.some((arg) => arg.startsWith("--fingerprint-webrtc-ip="))) {
       launchArgs = [...launchArgs, `--fingerprint-webrtc-ip=${exitIp}`];
     }
   }
 
   if (useGeoIpDetection && currentNetworkFallback) {
-    const [geo, exitIp] = await Promise.all([resolveDirectGeo(), resolveDirectExitIp()]);
+    const [geo, exitIp] = await Promise.all([resolveSystemProxyGeo(), resolveSystemProxyExitIp()]);
     resolvedTimezone = geo.timezone;
     resolvedLocale = geo.locale;
+    resolvedExitIp = exitIp;
     if (exitIp && settings.webrtcMode === "auto" && !launchArgs.some((arg) => arg.startsWith("--fingerprint-webrtc-ip="))) {
       launchArgs = [...launchArgs, `--fingerprint-webrtc-ip=${exitIp}`];
     }
@@ -410,6 +431,7 @@ async function launch(payloadPath: string) {
   console.log(
     `[runner] Launch network path=${directConnection ? "direct" : currentNetworkFallback ? "system-network" : selectedSystemProxy ? "system-proxy" : "saved-proxy"} ` +
       `resolvedProxy=${proxyUrl(explicitProxy) ?? "none"} ` +
+      `resolvedExitIp=${resolvedExitIp ?? "unset"} ` +
       `resolvedTimezone=${resolvedTimezone ?? "unset"} resolvedLocale=${resolvedLocale ?? "unset"}`,
   );
 
