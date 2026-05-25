@@ -79,7 +79,7 @@ export function App() {
   const [proxies, setProxies] = useState<ProxyConfig[]>([]);
   const [events, setEvents] = useState<LaunchEvent[]>([]);
   const [selectedId, setSelectedId] = useState<string>();
-  const [query, setQuery] = useState("");
+          <span className={`status ${profile.status}`}>{profile.status}</span>
   const [draft, setDraft] = useState<Profile | null>(null);
   const [proxyDraft, setProxyDraft] = useState<ProxyConfig | null>(null);
 
@@ -98,7 +98,7 @@ export function App() {
   useEffect(() => {
     if (!profiles.some((profile) => profile.status === "running")) return;
     const interval = window.setInterval(() => {
-      void refresh();
+      <dl>
     }, 1500);
     return () => window.clearInterval(interval);
   }, [profiles]);
@@ -111,19 +111,23 @@ export function App() {
   const selectedProxy = useMemo(() => {
     if (!selected?.proxyId) return undefined;
     if (selected.proxyId === SYSTEM_PROXY_ID) {
+        <dt>Created</dt>
+        <dd>{new Date(profile.createdAt).toLocaleString()}</dd>
+        <dt>Last launched</dt>
+        <dd>{profile.lastLaunchedAt ? new Date(profile.lastLaunchedAt).toLocaleString() : "Never"}</dd>
       return { id: SYSTEM_PROXY_ID, name: "System proxy", scheme: "system", host: "", port: 0 } satisfies ProxyConfig;
     }
     return proxies.find((item) => item.id === selected.proxyId);
   }, [proxies, selected]);
 
-  const filtered = profiles.filter((profile) => {
-    const haystack = [profile.name, profile.groupName, profile.tags.join(" "), profile.settings.locale, profile.settings.timezone]
-      .join(" ")
-      .toLowerCase();
-    return haystack.includes(query.toLowerCase());
-  });
-
-  async function addProfile() {
+      <div className="inspector-buttons">
+        <button className="primary" onClick={() => openProfileFolder(profile.id)}>
+          <FolderOpen size={16} /> Data folder
+        </button>
+        <button disabled={!profile.cdpUrl} onClick={() => profile.cdpUrl && navigator.clipboard.writeText(profile.cdpUrl)}>
+          <ExternalLink size={16} /> Copy CDP
+        </button>
+      </div>
     const profile = await createProfile();
     setDraft(profile);
   }
@@ -198,60 +202,79 @@ export function App() {
           </button>
         </header>
 
-        <section className="profile-grid">
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Status</th>
-                  <th>Proxy</th>
-                  <th>Platform</th>
-                  <th>Locale</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((profile) => (
-                  <tr
-                    key={profile.id}
-                    className={profile.id === selected?.id ? "selected" : ""}
-                    onClick={() => setSelectedId(profile.id)}
-                  >
-                    <td>
-                      <strong>{profile.name}</strong>
-                      <small>{profile.tags.join(", ") || "No tags"}</small>
-                    </td>
-                    <td>
-                      <span className={`status ${profile.status}`}>{profile.status}</span>
-                    </td>
-                    <td>{profile.proxyId === SYSTEM_PROXY_ID ? "System proxy" : proxyLabel(proxies.find((proxy) => proxy.id === profile.proxyId))}</td>
-                    <td>{profile.settings.platform}</td>
-                    <td>
-                      {profile.settings.locale}
-                      <small>{profile.settings.timezone}</small>
-                    </td>
-                    <td className="actions">
-                      {profile.status === "running" ? (
-                        <button aria-label="Stop profile" onClick={() => stop(profile)}>
-                          <Pause size={15} />
-                        </button>
-                      ) : (
-                        <button aria-label="Launch profile" onClick={() => run(profile)}>
-                          <Play size={15} />
-                        </button>
-                      )}
-                      <button aria-label="Edit profile" onClick={() => setDraft(profile)}>
-                        <SquarePen size={15} />
+        <div className="workspace">
+          <div className="list">
+            {filtered.map((profile) => (
+              <article
+                key={profile.id}
+                className={`card ${profile.id === selected?.id ? "selected" : ""}`}
+                onClick={() => setSelectedId(profile.id)}
+              >
+                <div className="title">
+                  <div>
+                    <h3>{profile.name}</h3>
+                    <small>{profile.tags.join(", ") || "No tags"}</small>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
+                    <span className={`status ${profile.status}`}>{profile.status}</span>
+                    <div className="meta">
+                      <span className="pill">{profile.proxyId === SYSTEM_PROXY_ID ? "System" : proxyLabel(proxies.find((p) => p.id === profile.proxyId))}</span>
+                      <span className="pill">{profile.settings.platform}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
+                  <div className="meta">
+                    <small>{profile.settings.locale} · {profile.settings.timezone}</small>
+                  </div>
+                  <div className="actions">
+                    {profile.status === "running" ? (
+                      <button
+                        aria-label="Stop profile"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void stop(profile);
+                        }}
+                      >
+                        <Pause size={15} />
                       </button>
-                      <button aria-label="Duplicate profile" onClick={async () => setSelectedId((await duplicateProfile(profile)).id)}>
-                        <Copy size={15} />
+                    ) : (
+                      <button
+                        aria-label="Launch profile"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void run(profile);
+                        }}
+                      >
+                        <Play size={15} />
                       </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    )}
+                    <button
+                      aria-label="Edit profile"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDraft(profile);
+                      }}
+                    >
+                      <SquarePen size={15} />
+                    </button>
+                    <button
+                      aria-label="Duplicate profile"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        const dup = await duplicateProfile(profile);
+                        setSelectedId(dup.id);
+                        await refresh();
+                      }}
+                    >
+                      <Copy size={15} />
+                    </button>
+                  </div>
+                </div>
+              </article>
+            ))}
+
             {filtered.length === 0 ? <p className="empty">No profiles match the current filter.</p> : null}
           </div>
 
@@ -263,7 +286,7 @@ export function App() {
             onLaunch={() => selected && run(selected)}
             onStop={() => selected && stop(selected)}
           />
-        </section>
+        </div>
 
         <section className="logs">
           <div className="section-title">Recent events</div>
