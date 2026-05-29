@@ -208,7 +208,7 @@ if (!downloadAlreadyPatched) {
 // flag is value-less). On a normal Windows desktop the sandbox works fine.
 // ---------------------------------------------------------------------------
 const configJsPath = path.resolve(downloadJsPath, "..", "config.js");
-const configSource = readFileSync(configJsPath, "utf8");
+let configSource = readFileSync(configJsPath, "utf8");
 
 if (configSource.includes('"--no-sandbox",')) {
   const configPatched = configSource.replace(
@@ -219,7 +219,23 @@ if (configSource.includes('"--no-sandbox",')) {
     throw new Error(`[patch-cloakbrowser] Failed to remove --no-sandbox in ${configJsPath}; upstream file shape changed.`);
   }
   writeFileSync(configJsPath, configPatched);
+  configSource = configPatched;
   process.stdout.write(`[patch-cloakbrowser] Removed default --no-sandbox in ${configJsPath}\n`);
 } else {
   process.stdout.write(`[patch-cloakbrowser] config.js already free of default --no-sandbox\n`);
+}
+
+const ignoreDefaultArgsNeedle =
+  'export const IGNORE_DEFAULT_ARGS = ["--enable-automation", "--enable-unsafe-swiftshader"];';
+const ignoreDefaultArgsReplacement =
+  'export const IGNORE_DEFAULT_ARGS = ["--enable-automation", "--enable-unsafe-swiftshader", "--no-sandbox"];';
+
+if (configSource.includes(ignoreDefaultArgsNeedle)) {
+  const configPatched = configSource.replace(ignoreDefaultArgsNeedle, ignoreDefaultArgsReplacement);
+  writeFileSync(configJsPath, configPatched);
+  process.stdout.write(`[patch-cloakbrowser] Added --no-sandbox to Playwright ignored default args in ${configJsPath}\n`);
+} else if (configSource.includes(ignoreDefaultArgsReplacement)) {
+  process.stdout.write(`[patch-cloakbrowser] Playwright ignored default args already include --no-sandbox\n`);
+} else {
+  throw new Error(`[patch-cloakbrowser] Failed to patch IGNORE_DEFAULT_ARGS in ${configJsPath}; upstream file shape changed.`);
 }

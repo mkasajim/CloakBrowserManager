@@ -458,6 +458,12 @@ async function launch(payloadPath: string) {
     humanPreset: settings.humanPreset === "default" ? undefined : settings.humanPreset,
     geoip: useGeoIpDetection && !!explicitProxy,
     extensionPaths: settings.extensionPaths.length ? settings.extensionPaths : undefined,
+    launchOptions: {
+      // Playwright defaults Chromium sandboxing to false and appends
+      // --no-sandbox. CloakBrowser removes its own default flag, but without
+      // this Playwright still triggers Chrome's unsupported-flag infobar.
+      chromiumSandbox: true,
+    },
   });
 
   const page = context.pages()[0] ?? (await context.newPage());
