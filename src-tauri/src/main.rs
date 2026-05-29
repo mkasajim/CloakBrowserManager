@@ -14,6 +14,7 @@ use std::{
     process::{Child, Command, Stdio},
     sync::Mutex,
     thread,
+    time::{Duration, Instant},
 };
 use tauri::{Emitter, Manager, State};
 
@@ -377,7 +378,7 @@ fn launch_profile(
             .arg(&script_arg)
             .arg("launch")
             .arg(&payload_path)
-            .stdin(Stdio::null())
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -422,6 +423,54 @@ fn launch_profile(
 
 fn find_existing_path(paths: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
     paths.into_iter().find(|path| path.exists())
+}
+
+/// Gracefully stop the Node runner and its Chrome grandchild.
+///
+/// Closing the runner's stdin sends it EOF; the runner reacts by calling
+/// `context.close()`, which lets Chrome write a clean `exit_type` (no
+/// "Chrome didn't shut down correctly" bubble on the next launch). If the
+/// runner hasn't exited within the grace period we force-kill the whole
+/// process tree so Chrome can never be orphaned.
+fn shutdown_runner(child: &mut Child) {
+    // Drop stdin -> EOF -> runner closes the browser cleanly.
+    drop(child.stdin.take());
+
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+            Err(_) => break,
+        }
+    }
+
+    force_kill_tree(child);
+    let _ = child.wait();
+}
+
+fn force_kill_tree(child: &mut Child) {
+    #[cfg(windows)]
+    {
+        // taskkill /T kills the whole tree (Node + Chrome); /F forces it.
+        let mut cmd = Command::new("taskkill");
+        hide_command_window(&mut cmd);
+        let _ = cmd
+            .arg("/PID")
+            .arg(child.id().to_string())
+            .arg("/T")
+            .arg("/F")
+            .output();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = child.kill();
+    }
 }
 
 fn hide_command_window(command: &mut Command) {
@@ -487,9 +536,11 @@ fn stop_profile(profile_id: String, state: State<AppState>) -> Result<LaunchEven
 }
 
 fn stop_profile_inner(profile_id: String, state: &AppState) -> Result<LaunchEvent, String> {
-    if let Some(mut child) = state.runner.children.lock().unwrap().remove(&profile_id) {
-        let _ = child.kill();
-        let _ = child.wait();
+    // Take the child out of the map first so we don't hold the runner lock while
+    // waiting for the browser to close (which would freeze other commands).
+    let child = state.runner.children.lock().unwrap().remove(&profile_id);
+    if let Some(mut child) = child {
+        shutdown_runner(&mut child);
     }
     if let Some(mut profile) = get_profile(state, &profile_id)? {
         profile.status = ProfileStatus::Stopped;

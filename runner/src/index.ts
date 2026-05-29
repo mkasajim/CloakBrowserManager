@@ -215,6 +215,10 @@ function parseSystemProxyValue(value: string, bypass?: string) {
 
 function buildArgs(settings: ProfileSettings, proxy?: ProxyConfig | null, disableProxy = false) {
   const args = [...settings.extraArgs];
+  // Suppress the "restore pages?" bubble if a previous session ended uncleanly
+  // (e.g. a forced kill). The graceful-shutdown path below normally prevents a
+  // dirty exit, but this keeps the next launch looking like a normal Chrome.
+  args.push("--hide-crash-restore-bubble");
   if (settings.fingerprintSeed) args.push(`--fingerprint=${settings.fingerprintSeed}`);
   if (settings.platform !== "auto") args.push(`--fingerprint-platform=${settings.platform}`);
   if (settings.screenWidth && settings.screenHeight) {
@@ -475,9 +479,14 @@ async function launch(payloadPath: string) {
     }) + "\n",
   );
 
+  let closing = false;
   const close = async () => {
+    if (closing) return;
+    closing = true;
     try {
       await context.close();
+    } catch {
+      // Context may already be gone; exit cleanly regardless.
     } finally {
       process.exit(0);
     }
@@ -485,6 +494,17 @@ async function launch(payloadPath: string) {
 
   process.on("SIGINT", close);
   process.on("SIGTERM", close);
+
+  // Windows has no real SIGTERM, so the manager signals shutdown by closing the
+  // runner's stdin. Treat stdin EOF (or an explicit "stop" line) as a request to
+  // close the browser gracefully — this lets Chrome flush a clean exit_type and
+  // avoids the "Chrome didn't shut down correctly" crash bubble on next launch.
+  process.stdin.resume();
+  process.stdin.on("data", (chunk) => {
+    if (chunk.toString().includes("stop")) void close();
+  });
+  process.stdin.on("end", () => void close());
+  process.stdin.on("close", () => void close());
 }
 
 async function main() {

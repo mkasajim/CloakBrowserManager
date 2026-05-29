@@ -10,9 +10,9 @@ const downloadJsPath = targetArg
 
 const source = readFileSync(downloadJsPath, "utf8");
 
-if (source.includes("DEFAULT_DOWNLOAD_TIMEOUT_MS")) {
-  process.stdout.write(`[patch-cloakbrowser] Already patched: ${downloadJsPath}\n`);
-  process.exit(0);
+const downloadAlreadyPatched = source.includes("DEFAULT_DOWNLOAD_TIMEOUT_MS");
+if (downloadAlreadyPatched) {
+  process.stdout.write(`[patch-cloakbrowser] download.js already patched: ${downloadJsPath}\n`);
 }
 
 const constantsNeedle = `const DOWNLOAD_TIMEOUT_MS = 600_000; // 10 minutes
@@ -181,17 +181,45 @@ const functionReplacement = `async function downloadFile(url, dest) {
 }
 `;
 
-let patched = source.replace(constantsNeedle, constantsReplacement);
-patched = patched.replace(legacyFunctionNeedle, functionReplacement);
+if (!downloadAlreadyPatched) {
+  let patched = source.replace(constantsNeedle, constantsReplacement);
+  patched = patched.replace(legacyFunctionNeedle, functionReplacement);
 
-patched = patched.replace(
-  /const UPDATE_CHECK_INTERVAL_MS = 3_600_000; \/\/ 1 hour\r?\nconst UPDATE_CHECK_INTERVAL_MS = 3_600_000; \/\/ 1 hour\r?\n/,
-  "const UPDATE_CHECK_INTERVAL_MS = 3_600_000; // 1 hour\n",
-);
+  patched = patched.replace(
+    /const UPDATE_CHECK_INTERVAL_MS = 3_600_000; \/\/ 1 hour\r?\nconst UPDATE_CHECK_INTERVAL_MS = 3_600_000; \/\/ 1 hour\r?\n/,
+    "const UPDATE_CHECK_INTERVAL_MS = 3_600_000; // 1 hour\n",
+  );
 
-if (patched === source) {
-  throw new Error(`[patch-cloakbrowser] Failed to patch ${downloadJsPath}; upstream file shape changed.`);
+  if (patched === source) {
+    throw new Error(`[patch-cloakbrowser] Failed to patch ${downloadJsPath}; upstream file shape changed.`);
+  }
+
+  writeFileSync(downloadJsPath, patched);
+  process.stdout.write(`[patch-cloakbrowser] Patched ${downloadJsPath}\n`);
 }
 
-writeFileSync(downloadJsPath, patched);
-process.stdout.write(`[patch-cloakbrowser] Patched ${downloadJsPath}\n`);
+// ---------------------------------------------------------------------------
+// Patch config.js: drop the default `--no-sandbox` flag.
+//
+// `--no-sandbox` is on Chrome's "bad flags" list, so launching with it shows the
+// yellow "You are using an unsupported command-line flag: --no-sandbox" infobar.
+// Removing it is the stealthiest fix — real Chrome runs sandboxed — and the flag
+// cannot be overridden through the public `args` option (dedup is keyed and the
+// flag is value-less). On a normal Windows desktop the sandbox works fine.
+// ---------------------------------------------------------------------------
+const configJsPath = path.resolve(downloadJsPath, "..", "config.js");
+const configSource = readFileSync(configJsPath, "utf8");
+
+if (configSource.includes('"--no-sandbox",')) {
+  const configPatched = configSource.replace(
+    /(\r?\n)\s*"--no-sandbox",(\r?\n)/,
+    "$1",
+  );
+  if (configPatched === configSource) {
+    throw new Error(`[patch-cloakbrowser] Failed to remove --no-sandbox in ${configJsPath}; upstream file shape changed.`);
+  }
+  writeFileSync(configJsPath, configPatched);
+  process.stdout.write(`[patch-cloakbrowser] Removed default --no-sandbox in ${configJsPath}\n`);
+} else {
+  process.stdout.write(`[patch-cloakbrowser] config.js already free of default --no-sandbox\n`);
+}
