@@ -27,3 +27,5 @@ runner/bin/node.exe
 *.sln
 *.sw?
 stitch_assets
+graphify-out/
+.antigravitycli/
