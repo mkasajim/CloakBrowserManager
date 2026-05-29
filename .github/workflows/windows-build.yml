@@ -44,13 +44,12 @@ jobs:
       - name: Build runner
         run: npm run runner:build
 
-      - name: Prune runner dev dependencies
-        run: npm --prefix runner prune --omit=dev
-
       - name: Prepare bundled Node runtime
         run: npm run runner:prepare-node
 
       - name: Build Tauri app
+        # tauri's beforeBuildCommand re-runs runner:build (tsc) and then prunes
+        # runner devDependencies, so the bundled node_modules ships prod-only.
         run: npm run tauri build
 
       - name: Upload installer

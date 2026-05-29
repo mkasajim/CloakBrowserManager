@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build && npm run runner:build && npm run runner:prepare-node",
+    "beforeBuildCommand": "npm run build && npm run runner:build && npm run runner:prepare-node && npm --prefix runner prune --omit=dev",
     "frontendDist": "../dist"
   },
   "app": {
