@@ -947,7 +947,8 @@ fn save_profile_inner(state: &AppState, profile: &Profile) -> Result<(), String>
 
 fn record_event(state: &AppState, event: &LaunchEvent) -> Result<(), String> {
     state.events.lock().unwrap().insert(0, event.clone());
-    insert_event(&state.conn()?, event)
+    let conn = state.conn()?;
+    insert_event(&conn, event)
 }
 
 fn insert_event(conn: &Connection, event: &LaunchEvent) -> Result<(), String> {
