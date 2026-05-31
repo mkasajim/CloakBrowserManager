@@ -32,6 +32,7 @@ import {
   createProxy,
   deleteProfile,
   duplicateProfile,
+  exportTextFile,
   getSystemInfo,
   launchProfile,
   listEvents,
@@ -240,19 +241,19 @@ export function App() {
     downloadAnchor.remove();
   }
 
-  function exportLogs() {
+  async function exportLogs() {
     const logLines = filteredEvents.map((e) => {
       const time = new Date(e.at).toISOString().replace("T", " ").slice(0, 19);
       return `[${time}] [${e.status.toUpperCase()}] [Profile: ${e.profileId.slice(0, 8)}] - ${e.message}`;
     }).join("\n");
-    
-    const dataStr = "data:text/plain;charset=utf-8," + encodeURIComponent(logLines);
-    const downloadAnchor = document.createElement("a");
-    downloadAnchor.setAttribute("href", dataStr);
-    downloadAnchor.setAttribute("download", `cloakbrowser_logs_${new Date().toISOString().slice(0,10)}.txt`);
-    document.body.appendChild(downloadAnchor);
-    downloadAnchor.click();
-    downloadAnchor.remove();
+
+    try {
+      const fileName = `cloakbrowser_logs_${new Date().toISOString().slice(0,10)}.txt`;
+      const path = await exportTextFile(fileName, logLines);
+      await showAlert(`Logs exported to ${path}`, "Logs Exported", "info");
+    } catch (err) {
+      await showAlert(`Failed to export logs: ${err}`, "Export Error", "error");
+    }
   }
 
   function importProfiles(e: React.ChangeEvent<HTMLInputElement>) {
@@ -1108,9 +1109,6 @@ function ProfileEditor({
                   </Field>
                   <Field label="Screen Height">
                     <input type="number" value={profile.settings.screenHeight} onChange={(e) => settings({ screenHeight: Number(e.target.value) })} />
-                  </Field>
-                  <Field label="Device Scale Factor">
-                    <input type="number" step="0.25" value={profile.settings.deviceScaleFactor} onChange={(e) => settings({ deviceScaleFactor: Number(e.target.value) })} />
                   </Field>
                 </div>
               </section>

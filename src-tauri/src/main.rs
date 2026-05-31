@@ -63,7 +63,6 @@ struct ProfileSettings {
     timezone: String,
     screen_width: u32,
     screen_height: u32,
-    device_scale_factor: f64,
     humanize_enabled: bool,
     human_preset: String,
     geoip_enabled: bool,
@@ -883,6 +882,26 @@ fn clear_launch_events(state: State<AppState>) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn export_text_file(file_name: String, content: String, state: State<AppState>) -> Result<String, String> {
+    let safe_name = Path::new(&file_name)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "Invalid export file name".to_string())?;
+    if safe_name.trim().is_empty() {
+        return Err("Export file name is required".to_string());
+    }
+
+    let logs_dir = state.data_dir.join("logs");
+    fs::create_dir_all(&logs_dir).map_err(|error| error.to_string())?;
+    let target = logs_dir.join(safe_name);
+    if !target.starts_with(&logs_dir) {
+        return Err("Refusing to export outside the logs directory".to_string());
+    }
+    fs::write(&target, content).map_err(|error| error.to_string())?;
+    Ok(target.to_string_lossy().to_string())
+}
+
 fn get_profile(state: &AppState, profile_id: &str) -> Result<Option<Profile>, String> {
     state
         .conn()?
@@ -1017,7 +1036,8 @@ fn main() {
             test_proxy,
             clear_profile_data,
             get_system_info,
-            clear_launch_events
+            clear_launch_events,
+            export_text_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

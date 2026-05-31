@@ -188,3 +188,16 @@ export async function clearLaunchEvents(): Promise<void> {
   if (isTauri()) return invoke("clear_launch_events");
   write(eventsKey, []);
 }
+
+export async function exportTextFile(fileName: string, content: string): Promise<string> {
+  if (isTauri()) return invoke("export_text_file", { fileName, content });
+
+  const dataStr = "data:text/plain;charset=utf-8," + encodeURIComponent(content);
+  const downloadAnchor = document.createElement("a");
+  downloadAnchor.setAttribute("href", dataStr);
+  downloadAnchor.setAttribute("download", fileName);
+  document.body.appendChild(downloadAnchor);
+  downloadAnchor.click();
+  downloadAnchor.remove();
+  return fileName;
+}

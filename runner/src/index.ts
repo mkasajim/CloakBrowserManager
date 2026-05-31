@@ -27,7 +27,6 @@ interface ProfileSettings {
   timezone: string;
   screenWidth: number;
   screenHeight: number;
-  deviceScaleFactor: number;
   humanizeEnabled: boolean;
   humanPreset: "default" | "careful";
   geoipEnabled: boolean;
@@ -458,9 +457,6 @@ async function launch(payloadPath: string) {
     locale: useGeoIpDetection && !!explicitProxy ? undefined : resolvedLocale,
     userAgent: settings.userAgent || undefined,
     viewport: null,
-    contextOptions: {
-      deviceScaleFactor: settings.deviceScaleFactor,
-    },
     humanize: settings.humanizeEnabled,
     humanPreset: settings.humanPreset === "default" ? undefined : settings.humanPreset,
     geoip: useGeoIpDetection && !!explicitProxy,

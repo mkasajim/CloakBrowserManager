@@ -27,7 +27,6 @@ export interface ProfileSettings {
   timezone: string;
   screenWidth: number;
   screenHeight: number;
-  deviceScaleFactor: number;
   humanizeEnabled: boolean;
   humanPreset: "default" | "careful";
   geoipEnabled: boolean;
@@ -69,7 +68,6 @@ export const defaultSettings: ProfileSettings = {
   timezone: "America/New_York",
   screenWidth: 1366,
   screenHeight: 768,
-  deviceScaleFactor: 1,
   humanizeEnabled: true,
   humanPreset: "default",
   geoipEnabled: false,
