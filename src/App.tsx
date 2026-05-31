@@ -43,6 +43,8 @@ import {
   stopProfile,
   testProxy,
 } from "./api";
+import { ClearDataMenu } from "./components/ClearDataMenu";
+import type { ClearScope } from "./api";
 import type { LaunchEvent, Profile, ProxyConfig, SystemInfo } from "./types";
 
 const splitList = (value: string) => value.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean);
@@ -195,16 +197,21 @@ export function App() {
     }
   }
 
-  async function clearData(profile: Profile) {
+  async function clearData(profile: Profile, scope: ClearScope) {
     if (profile.status === "running") {
-      await showAlert("Cannot clear cache while browser is running.", "Cache Clear Warning", "warn");
+      await showAlert("Cannot clear browser data while browser is running.", "Clear Data Warning", "warn");
       return;
     }
-    const ok = await showConfirm(`Are you sure you want to clear cookies, history, and cache for "${profile.name}"?\nThis action cannot be undone.`, "Clear Profile Data", "warn");
+    const labels: Record<ClearScope, string> = {
+      all: "cookies, history, cache, and logins",
+      cache: "cached files",
+      cookies: "cookies and site sessions",
+    };
+    const ok = await showConfirm(`Are you sure you want to clear ${labels[scope]} for "${profile.name}"?\nThis action cannot be undone.`, "Clear Profile Data", "warn");
     if (!ok) return;
     try {
-      await clearProfileData(profile.id);
-      await showAlert("Profile browser data cleared successfully!", "Data Cleared", "info");
+      await clearProfileData(profile.id, scope);
+      await showAlert("Profile browser data cleared successfully.", "Data Cleared", "info");
       await refresh();
     } catch (err) {
       await showAlert(`Error clearing data: ${err}`, "Error", "error");
@@ -545,7 +552,7 @@ export function App() {
                   await refresh();
                 }
               }}
-              onClearData={() => selected && clearData(selected)}
+              onClearData={(scope) => selected && clearData(selected, scope)}
             />
           </div>
         ) : null}
@@ -886,7 +893,7 @@ function ProfileInspector({
   onLaunch: () => void;
   onStop: () => void;
   onDuplicate: () => void;
-  onClearData: () => void;
+  onClearData: (scope: ClearScope) => void;
 }) {
   if (!profile) return <aside className="inspector empty-inspector">Select or create a profile to get started.</aside>;
   return (
@@ -941,9 +948,7 @@ function ProfileInspector({
         <button type="button" disabled={!profile.cdpUrl} onClick={() => profile.cdpUrl && navigator.clipboard.writeText(profile.cdpUrl)} style={{ flex: "1 1 45%" }}>
           <ExternalLink size={14} /> Copy CDP
         </button>
-        <button type="button" disabled={profile.status === "running"} onClick={onClearData} style={{ flex: "1 1 100%", border: "1px solid var(--error)", color: "var(--error)", backgroundColor: "rgba(255, 180, 171, 0.05)", marginTop: 4 }}>
-          <RefreshCw size={14} /> Clear Cache
-        </button>
+        <ClearDataMenu disabled={profile.status === "running"} onSelect={onClearData} />
       </div>
     </aside>
   );

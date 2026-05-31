@@ -33,6 +33,7 @@ struct AppState {
     profiles_dir: PathBuf,
     events: Mutex<Vec<LaunchEvent>>,
     runner: RunnerState,
+    db: Mutex<Connection>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -117,19 +118,26 @@ impl AppState {
         fs::create_dir_all(&profiles_dir).map_err(|error| error.to_string())?;
         fs::create_dir_all(data_dir.join("logs")).map_err(|error| error.to_string())?;
         let db_path = data_dir.join("manager.db");
+        let connection = Connection::open(&db_path).map_err(|error| error.to_string())?;
+        connection
+            .busy_timeout(Duration::from_secs(5))
+            .map_err(|error| error.to_string())?;
         let state = Self {
             db_path,
             data_dir,
             profiles_dir,
             events: Mutex::new(Vec::new()),
             runner: RunnerState::default(),
+            db: Mutex::new(connection),
         };
         state.migrate()?;
         Ok(state)
     }
 
-    fn conn(&self) -> Result<Connection, String> {
-        Connection::open(&self.db_path).map_err(|error| error.to_string())
+    /// Lock and return the single shared SQLite connection. Reusing one
+    /// connection avoids re-opening the database file on every command/event.
+    fn conn(&self) -> Result<std::sync::MutexGuard<'_, Connection>, String> {
+        self.db.lock().map_err(|error| error.to_string())
     }
 
     fn migrate(&self) -> Result<(), String> {
@@ -384,18 +392,22 @@ fn launch_profile(
             .spawn()
             .map_err(|error| format!("Failed to start Node runner: {error}"))?;
         let mut child = child;
-        if let Some(stdout) = child.stdout.take() {
-            spawn_runner_log_reader(stdout, state.db_path.clone(), profile_id.clone(), false, app.clone());
-        }
-        if let Some(stderr) = child.stderr.take() {
-            spawn_runner_log_reader(stderr, state.db_path.clone(), profile_id.clone(), true, app.clone());
-        }
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+        // Insert the child into the map *before* spawning reader threads so the
+        // stdout-EOF cleanup can never run before the child is registered.
         state
             .runner
             .children
             .lock()
             .unwrap()
             .insert(profile_id.clone(), child);
+        if let Some(stdout) = stdout {
+            spawn_runner_log_reader(stdout, profile_id.clone(), false, app.clone());
+        }
+        if let Some(stderr) = stderr {
+            spawn_runner_log_reader(stderr, profile_id.clone(), true, app.clone());
+        }
     } else {
         let resolved = runner_root
             .as_ref()
@@ -486,7 +498,6 @@ fn hide_command_window(command: &mut Command) {
 
 fn spawn_runner_log_reader<R>(
     reader: R,
-    db_path: PathBuf,
     profile_id: String,
     is_error_stream: bool,
     app: tauri::AppHandle,
@@ -505,10 +516,46 @@ fn spawn_runner_log_reader<R>(
                 cdp_url: None,
                 at: Utc::now().to_rfc3339(),
             };
-            let _ = record_event_to_db(&db_path, &event);
+            let state = app.state::<AppState>();
+            if let Ok(conn) = state.conn() {
+                let _ = insert_event(&conn, &event);
+            }
             let _ = app.emit("runner-log", &event);
         }
+        // EOF on the runner's stdout means the Node process exited (the user
+        // closed the browser window, the runner crashed, or we asked it to
+        // stop). Reconcile state so the profile flips back to "stopped".
+        if !is_error_stream {
+            handle_runner_exit(&app, &profile_id);
+        }
     });
+}
+
+/// React to the runner process exiting on its own (e.g. the user closed the
+/// browser window). No-op if a manual `stop_profile` already removed the child.
+fn handle_runner_exit(app: &tauri::AppHandle, profile_id: &str) {
+    let state = app.state::<AppState>();
+    let state = state.inner();
+    let child = state.runner.children.lock().unwrap().remove(profile_id);
+    let Some(mut child) = child else {
+        return; // Already handled by a manual stop.
+    };
+    let _ = child.wait();
+
+    if let Ok(Some(mut profile)) = get_profile(state, profile_id) {
+        profile.status = ProfileStatus::Stopped;
+        profile.cdp_url = None;
+        let _ = save_profile_inner(state, &profile);
+    }
+    let event = LaunchEvent {
+        profile_id: profile_id.to_string(),
+        status: ProfileStatus::Stopped,
+        message: "Browser closed.".to_string(),
+        cdp_url: None,
+        at: Utc::now().to_rfc3339(),
+    };
+    let _ = record_event(state, &event);
+    let _ = app.emit("runner-log", &event);
 }
 
 fn runner_message_from_line(line: &str, is_error_stream: bool) -> Option<String> {
@@ -635,34 +682,94 @@ fn test_proxy(proxy: ProxyConfig, state: State<AppState>) -> Result<ProxyConfig,
     Ok(next_proxy)
 }
 
+/// Cache locations inside a Chromium persistent profile (relative to the
+/// user-data dir; the active profile lives under `Default/`).
+const CACHE_RELATIVE_PATHS: &[&str] = &[
+    "Default/Cache",
+    "Default/Code Cache",
+    "Default/GPUCache",
+    "Default/Service Worker/CacheStorage",
+    "Default/Service Worker/ScriptCache",
+    "GrShaderCache",
+    "ShaderCache",
+    "GraphiteDawnCache",
+];
+
+/// Cookie stores inside a Chromium persistent profile.
+const COOKIE_RELATIVE_PATHS: &[&str] = &[
+    "Default/Network/Cookies",
+    "Default/Network/Cookies-journal",
+    "Default/Cookies",
+    "Default/Cookies-journal",
+];
+
+fn join_relative(base: &Path, relative: &str) -> PathBuf {
+    let mut path = base.to_path_buf();
+    for segment in relative.split('/') {
+        path.push(segment);
+    }
+    path
+}
+
+/// Remove a single file or directory, tolerating a missing path.
+fn remove_path(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+    if path.is_dir() {
+        fs::remove_dir_all(path).map_err(|error| error.to_string())
+    } else {
+        fs::remove_file(path).map_err(|error| error.to_string())
+    }
+}
+
 #[tauri::command]
 fn clear_profile_data(
     profile_id: String,
+    scope: String,
     state: State<AppState>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     let is_running = state.runner.children.lock().unwrap().contains_key(&profile_id);
     if is_running {
-        return Err("Cannot clear browser cache/cookies while the profile is running".to_string());
+        return Err("Cannot clear browser data while the profile is running".to_string());
     }
-    
+
     let dir = state.profile_dir(&profile_id);
-    if dir.exists() {
-        for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
-            let entry = entry.map_err(|e| e.to_string())?;
-            let path = entry.path();
-            if path.is_dir() {
-                fs::remove_dir_all(path).map_err(|e| e.to_string())?;
-            } else {
-                fs::remove_file(path).map_err(|e| e.to_string())?;
-            }
-        }
+    // Safety: never operate outside the managed profiles directory.
+    if !dir.starts_with(&state.profiles_dir) {
+        return Err("Refusing to clear data outside the profiles directory".to_string());
     }
-    
+
+    let message = match scope.as_str() {
+        "all" => {
+            if dir.exists() {
+                for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
+                    let entry = entry.map_err(|e| e.to_string())?;
+                    remove_path(&entry.path())?;
+                }
+            }
+            "Profile data (cache, cookies, history, and logins) cleared."
+        }
+        "cache" => {
+            for relative in CACHE_RELATIVE_PATHS {
+                remove_path(&join_relative(&dir, relative))?;
+            }
+            "Profile cache cleared (cookies and logins kept)."
+        }
+        "cookies" => {
+            for relative in COOKIE_RELATIVE_PATHS {
+                remove_path(&join_relative(&dir, relative))?;
+            }
+            "Profile cookies cleared (cache and history kept)."
+        }
+        other => return Err(format!("Unknown clear scope: {other}")),
+    };
+
     let event = LaunchEvent {
         profile_id,
         status: ProfileStatus::Stopped,
-        message: "Profile browser cache, cookies, and local data cleared.".to_string(),
+        message: message.to_string(),
         cdp_url: None,
         at: Utc::now().to_rfc3339(),
     };
@@ -840,21 +947,19 @@ fn save_profile_inner(state: &AppState, profile: &Profile) -> Result<(), String>
 
 fn record_event(state: &AppState, event: &LaunchEvent) -> Result<(), String> {
     state.events.lock().unwrap().insert(0, event.clone());
-    record_event_to_db(&state.db_path, event)
+    insert_event(&state.conn()?, event)
 }
 
-fn record_event_to_db(db_path: &Path, event: &LaunchEvent) -> Result<(), String> {
-    Connection::open(db_path)
-        .map_err(|error| error.to_string())?
-        .execute(
-            "insert into launch_events (profile_id, json, created_at) values (?1, ?2, ?3)",
-            params![
-                event.profile_id,
-                serde_json::to_string(event).map_err(|error| error.to_string())?,
-                event.at,
-            ],
-        )
-        .map_err(|error| error.to_string())?;
+fn insert_event(conn: &Connection, event: &LaunchEvent) -> Result<(), String> {
+    conn.execute(
+        "insert into launch_events (profile_id, json, created_at) values (?1, ?2, ?3)",
+        params![
+            event.profile_id,
+            serde_json::to_string(event).map_err(|error| error.to_string())?,
+            event.at,
+        ],
+    )
+    .map_err(|error| error.to_string())?;
     Ok(())
 }
 

@@ -394,8 +394,13 @@ async function resolveSystemProxyGeo() {
 
 async function launch(payloadPath: string) {
   configureLocalBinaryOverride();
-  const { launchPersistentContext } = await import("cloakbrowser");
-  const payload = JSON.parse(await readFile(payloadPath, "utf8")) as LaunchPayload;
+  // Load the (heavy) cloakbrowser/playwright module concurrently with reading
+  // the launch payload to shave a little startup latency.
+  const [{ launchPersistentContext }, payloadRaw] = await Promise.all([
+    import("cloakbrowser"),
+    readFile(payloadPath, "utf8"),
+  ]);
+  const payload = JSON.parse(payloadRaw) as LaunchPayload;
   const settings = payload.profile.settings;
   const useGeoIpDetection = settings.geoipEnabled;
   const selectedSystemProxy = payload.proxy?.scheme === "system";
@@ -410,11 +415,18 @@ async function launch(payloadPath: string) {
   let launchArgs = buildArgs(settings, explicitProxy, directConnection);
 
   if (useGeoIpDetection && directConnection) {
-    const [geo, exitIp] = await Promise.all([resolveDirectGeo(), resolveDirectExitIp()]);
+    // The exit IP is only needed to fill an explicit WebRTC IP; for "auto"
+    // the flag is already present (and dropped by cloakbrowser when direct),
+    // so skip the extra IP-echo round trips in that case to speed up launch.
+    const needExitIp = settings.webrtcMode === "explicit";
+    const [geo, exitIp] = await Promise.all([
+      resolveDirectGeo(),
+      needExitIp ? resolveDirectExitIp() : Promise.resolve(undefined),
+    ]);
     resolvedTimezone = geo.timezone;
     resolvedLocale = geo.locale;
     resolvedExitIp = exitIp;
-    if (exitIp && settings.webrtcMode === "auto" && !launchArgs.some((arg) => arg.startsWith("--fingerprint-webrtc-ip="))) {
+    if (exitIp && !launchArgs.some((arg) => arg.startsWith("--fingerprint-webrtc-ip="))) {
       launchArgs = [...launchArgs, `--fingerprint-webrtc-ip=${exitIp}`];
     }
   }
@@ -467,16 +479,9 @@ async function launch(payloadPath: string) {
   });
 
   const page = context.pages()[0] ?? (await context.newPage());
-  if (settings.startupUrl) {
-    try {
-      await page.goto(settings.startupUrl, { waitUntil: "domcontentloaded", timeout: 45000 });
-    } catch (error) {
-      console.warn(
-        `[runner] Startup navigation failed for ${settings.startupUrl}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
 
+  // Signal readiness immediately — do NOT block on the (potentially heavy)
+  // startup navigation. The browser window is already open and interactive.
   process.stdout.write(
     JSON.stringify({
       type: "ready",
@@ -485,10 +490,29 @@ async function launch(payloadPath: string) {
     }) + "\n",
   );
 
+  if (settings.startupUrl) {
+    // Fire-and-forget navigation; "commit" resolves as soon as the response
+    // starts so the page is usable without waiting for full DOM load.
+    void page
+      .goto(settings.startupUrl, { waitUntil: "commit", timeout: 45000 })
+      .catch((error) => {
+        console.warn(
+          `[runner] Startup navigation failed for ${settings.startupUrl}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
+  }
+
   let closing = false;
   const close = async () => {
     if (closing) return;
     closing = true;
+    process.stdout.write(
+      JSON.stringify({
+        type: "closed",
+        profileId: payload.profile.id,
+        message: "Browser closed.",
+      }) + "\n",
+    );
     try {
       await context.close();
     } catch {
@@ -497,6 +521,11 @@ async function launch(payloadPath: string) {
       process.exit(0);
     }
   };
+
+  // The user closing the browser window fires the context "close" event; treat
+  // it as a shutdown request so the runner process exits (and the manager can
+  // flip the profile back to "stopped").
+  context.on("close", () => void close());
 
   process.on("SIGINT", close);
   process.on("SIGTERM", close);

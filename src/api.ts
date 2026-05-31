@@ -152,13 +152,20 @@ export async function testProxy(proxy: ProxyConfig): Promise<ProxyConfig> {
   return next;
 }
 
-export async function clearProfileData(profileId: string): Promise<void> {
-  if (isTauri()) return invoke("clear_profile_data", { profileId });
-  
+export type ClearScope = "all" | "cache" | "cookies";
+
+export async function clearProfileData(profileId: string, scope: ClearScope): Promise<void> {
+  if (isTauri()) return invoke("clear_profile_data", { profileId, scope });
+
+  const messages: Record<ClearScope, string> = {
+    all: "Mock profile data (cache, cookies, history, and logins) cleared.",
+    cache: "Mock profile cache cleared (cookies and logins kept).",
+    cookies: "Mock profile cookies cleared (cache and history kept).",
+  };
   const event: LaunchEvent = {
     profileId,
     status: "stopped",
-    message: "Mock profile browser cache, cookies, and local data cleared.",
+    message: messages[scope],
     at: now(),
   };
   write(eventsKey, [event, ...read<LaunchEvent[]>(eventsKey, [])].slice(0, 100));
