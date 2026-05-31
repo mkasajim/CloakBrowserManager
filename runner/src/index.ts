@@ -25,8 +25,6 @@ interface ProfileSettings {
   userAgent: string;
   locale: string;
   timezone: string;
-  viewportWidth: number;
-  viewportHeight: number;
   screenWidth: number;
   screenHeight: number;
   deviceScaleFactor: number;
@@ -459,10 +457,7 @@ async function launch(payloadPath: string) {
     timezone: useGeoIpDetection && !!explicitProxy ? undefined : resolvedTimezone,
     locale: useGeoIpDetection && !!explicitProxy ? undefined : resolvedLocale,
     userAgent: settings.userAgent || undefined,
-    viewport: {
-      width: settings.viewportWidth,
-      height: settings.viewportHeight,
-    },
+    viewport: null,
     contextOptions: {
       deviceScaleFactor: settings.deviceScaleFactor,
     },

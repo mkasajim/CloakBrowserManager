@@ -61,8 +61,6 @@ struct ProfileSettings {
     user_agent: String,
     locale: String,
     timezone: String,
-    viewport_width: u32,
-    viewport_height: u32,
     screen_width: u32,
     screen_height: u32,
     device_scale_factor: f64,

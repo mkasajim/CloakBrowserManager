@@ -923,8 +923,8 @@ function ProfileInspector({
         <dd>{proxyDetail(proxy)}</dd>
         <dt>Seed</dt>
         <dd style={{ fontFamily: "var(--font-code)" }}>{profile.settings.fingerprintSeed || "Auto"}</dd>
-        <dt>Viewport</dt>
-        <dd>{profile.settings.viewportWidth}x{profile.settings.viewportHeight}</dd>
+        <dt>Screen</dt>
+        <dd>{profile.settings.screenWidth}x{profile.settings.screenHeight}</dd>
         <dt>Locale</dt>
         <dd>{profile.settings.locale}</dd>
         <dt>Timezone</dt>
@@ -1103,12 +1103,6 @@ function ProfileEditor({
                   <h3>Display Resolution</h3>
                 </div>
                 <div className="form-grid">
-                  <Field label="Viewport width">
-                    <input type="number" value={profile.settings.viewportWidth} onChange={(e) => settings({ viewportWidth: Number(e.target.value) })} />
-                  </Field>
-                  <Field label="Viewport height">
-                    <input type="number" value={profile.settings.viewportHeight} onChange={(e) => settings({ viewportHeight: Number(e.target.value) })} />
-                  </Field>
                   <Field label="Screen Width">
                     <input type="number" value={profile.settings.screenWidth} onChange={(e) => settings({ screenWidth: Number(e.target.value) })} />
                   </Field>

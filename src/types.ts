@@ -25,8 +25,6 @@ export interface ProfileSettings {
   userAgent: string;
   locale: string;
   timezone: string;
-  viewportWidth: number;
-  viewportHeight: number;
   screenWidth: number;
   screenHeight: number;
   deviceScaleFactor: number;
@@ -69,8 +67,6 @@ export const defaultSettings: ProfileSettings = {
   userAgent: "",
   locale: "en-US",
   timezone: "America/New_York",
-  viewportWidth: 1366,
-  viewportHeight: 768,
   screenWidth: 1366,
   screenHeight: 768,
   deviceScaleFactor: 1,
